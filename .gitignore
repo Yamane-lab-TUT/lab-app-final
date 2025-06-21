@@ -1,0 +1,6 @@
+# Googleの認証キーファイルを無視する
+research-lab-app-42f3c0b5d5b1.json
+
+# Pythonの仮想環境フォルダやキャッシュを無視する
+venv/
+__pycache__/
