@@ -64,7 +64,7 @@ def initialize_google_services():
         # Streamlit CloudのSecretsに情報があるかチェック
         if "gcs_credentials" in st.secrets:
             # Secretsから認証情報を読み込む
-            creds_dict = json.loads(st.secrets[gcs]["gcs_credentials"])
+            creds_dict = json.loads(st.secrets["gcs"]["gcs_credentials"])
             creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
             credentials = service_account.Credentials.from_service_account_info(creds)
             gc = gspread.service_account_from_dict(creds_dict)
