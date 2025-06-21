@@ -66,7 +66,7 @@ def initialize_google_services():
             # Secretsから認証情報を読み込む
             creds_dict = json.loads(st.secrets["gcs_credentials"])
             creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-            gc = service_account.Credentials.from_service_account_info(creds)
+            gc = gspread.service_account_from_dict(creds_dict)
 
         else:
             # ローカルで実行する場合（ファイルから読み込む）
