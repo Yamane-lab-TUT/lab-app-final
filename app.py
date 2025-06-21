@@ -26,6 +26,7 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from googleapiclient.errors import HttpError
+from google.oauth2 import service_account
 
 # --- 1. グローバル設定 ---
 st.set_page_config(page_title="山根研 便利屋さん", layout="wide")
@@ -63,7 +64,7 @@ def initialize_google_services():
         # Streamlit CloudのSecretsに情報があるかチェック
         if "gcs_credentials" in st.secrets:
             # Secretsから認証情報を読み込む
-            creds_dict = json.loads(st.secrets["gcs_credentials"])
+            creds_dict = json.loads(st.secrets[gcs]["gcs_credentials"])
             creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
             gc = gspread.service_account_from_dict(creds_dict)
         else:
