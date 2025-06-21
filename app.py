@@ -1,9 +1,11 @@
 # --------------------------------------------------------------------------
-# Yamane Lab Convenience Tool - Streamlit Application (v5.1 - 全機能統合)
+# Yamane Lab Convenience Tool - Streamlit Application (v6.0 - 最終完成版)
 #
-# v5.1:
-# - test.pyで開発したPLデータ解析機能を、メインのapp.pyに統合。
-# - これを全ての機能を含んだ、最終的な完成版とする。
+# v6.0:
+# - 不正なインデント文字を全て修正。
+# - ローカル実行(ファイル読込)とデプロイ(Secrets読込)の両方に対応する
+#   正しい認証処理を実装。
+# - 全機能を統合した最終版。
 # --------------------------------------------------------------------------
 
 import streamlit as st
@@ -16,8 +18,6 @@ import json
 from datetime import datetime, time, timedelta
 from urllib.parse import quote as url_quote, urlencode
 from io import BytesIO
-
-# データ解析・グラフ描画ライブラリ
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -34,15 +34,17 @@ st.set_page_config(page_title="山根研 便利屋さん", layout="wide")
 try:
     plt.rcParams['font.family'] = 'Meiryo'
 except:
-    try: plt.rcParams['font.family'] = 'Yu Gothic'
-    except: plt.rcParams['font.family'] = 'sans-serif'
+    try:
+        plt.rcParams['font.family'] = 'Yu Gothic'
+    except:
+        plt.rcParams['font.family'] = 'sans-serif'
 plt.rcParams['font.weight'] = 'bold'; plt.rcParams['axes.labelweight'] = 'bold'
 plt.rcParams['axes.linewidth'] = 1.5; plt.rcParams['xtick.major.width'] = 1.5
 plt.rcParams['ytick.major.width'] = 1.5; plt.rcParams['font.size'] = 14
 plt.rcParams['axes.unicode_minus'] = False
 
 # --- Google Cloud 関連設定 ---
-SERVICE_ACCOUNT_FILE = 'research-lab-app-42f3c0b5d5b1.json'
+SERVICE_ACCOUNT_FILE = 'research-lab-app-42f3c0b5d5b1.json' # ローカル実行時のみ使用
 SPREADSHEET_NAME = 'エピノート'
 FOLDER_IDS = { 'EP_D1': '1KQEeEsHChqtrAIvP91ILnf6oS4fTVi1p', 'EP_D2': '1inmARuM_SgiYHi4PR7rcWRH0jERKZVJy', 'MT': '1YllkIwYuV3IqY4_i0YoyY43SAB-U8-0i', 'MINUTES': '1g7qiEFuEchsFFBKFJwxN2D2PjShuDtzM', 'HANDOVER': '1Mr70YjsgCzMboD7UZStm7bE8LQs1mwFu', 'QA': '1cil7cMFmQlgfzqOD-8QOm4KqVB4Emy79' }
 DEFAULT_CALENDAR_ID = 'yamane.lab.6747@gmail.com'
@@ -52,18 +54,36 @@ INQUIRY_RECIPIENT_EMAIL = 'kyuno.yamato.ns@tut.ac.jp'
 # --- 2. Googleサービス初期化 ---
 @st.cache_resource(show_spinner="Googleサービスに接続中...")
 def initialize_google_services():
+    """
+    Streamlit CloudのSecretsとローカルのJSONファイルの両方に対応した認証処理。
+    """
     try:
         scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/calendar']
-        creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=scopes)
+        
+        # Streamlit CloudのSecretsに情報があるかチェック
+        if "gcs_credentials" in st.secrets:
+            # Secretsから認証情報を読み込む
+            creds_dict = json.loads(st.secrets["gcs_credentials"])
+            creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+            gc = gspread.service_account_from_dict(creds_dict)
+        else:
+            # ローカルで実行する場合（ファイルから読み込む）
+            if os.path.exists(SERVICE_ACCOUNT_FILE):
+                creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=scopes)
+                gc = gspread.service_account(filename=SERVICE_ACCOUNT_FILE)
+            else:
+                st.error(f"認証ファイルが見つかりません: {SERVICE_ACCOUNT_FILE}")
+                st.info("ローカルで実行する場合、app.pyと同じフォルダに認証用のJSONファイルを置いてください。")
+                st.stop()
+
         drive_service = build('drive', 'v3', credentials=creds)
         calendar_service = build('calendar', 'v3', credentials=creds)
-        gc = gspread.service_account(filename=SERVICE_ACCOUNT_FILE)
+        
         return gc, drive_service, calendar_service
     except Exception as e:
         st.error(f"❌ 致命的なエラー: サービスの初期化に失敗しました: {e}"); st.stop()
 
 # --- 3. ヘルパー関数 ---
-
 @st.cache_data(ttl=300, show_spinner="シート「{sheet_name}」を読み込み中...")
 def get_sheet_as_df(_gc, spreadsheet_name, sheet_name):
     try:
