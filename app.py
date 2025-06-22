@@ -139,7 +139,7 @@ def page_note_recording(drive_service, gc):
     note_type = st.radio("どちらを登録しますか？", ("エピノート", "メンテノート"), horizontal=True)
     if note_type == "エピノート":
         with st.form("ep_note_form", clear_on_submit=True):
-            ep_category = st.radio("カテゴリ", ("D1", "D2"), horizontal=True); ep_memo = st.text_area("メモ内容")
+            ep_category = st.radio("カテゴリ", ("D1", "D2"), horizontal=True); ep_memo = st.text_area("メモ内容(番号など)")
             uploaded_file = st.file_uploader("エピノートの写真（必須）", type=["jpg", "jpeg", "png"])
             submitted = st.form_submit_button("エピノートを保存")
             if submitted:
@@ -153,7 +153,7 @@ def page_note_recording(drive_service, gc):
                 else: st.error("写真をアップロードしてください。")
     elif note_type == "メンテノート":
         with st.form("mt_note_form", clear_on_submit=True):
-            mt_memo = st.text_area("メモ内容"); uploaded_file = st.file_uploader("関連写真（任意）", type=["jpg", "jpeg", "png"])
+            mt_memo = st.text_area("メモ内容（日付など）"); uploaded_file = st.file_uploader("関連写真", type=["jpg", "jpeg", "png"])
             submitted = st.form_submit_button("メンテノートを保存")
             if submitted:
                 if not mt_memo: st.error("メモ内容を入力してください。")
@@ -425,7 +425,7 @@ def page_inquiry(gc):
                 spreadsheet = gc.open(SPREADSHEET_NAME); spreadsheet.worksheet(inquiry_sheet_name).append_row(row_data)
                 subject = f"【研究室便利屋さん】お問い合わせ: {category}"; body = f"新しいお問い合わせが届きました。\n\n種類: {category}\n内容:\n{content}\n\n連絡先: {contact or 'なし'}\nタイムスタンプ: {timestamp}"
                 gmail_link = generate_gmail_link(INQUIRY_RECIPIENT_EMAIL, subject, body)
-                st.success("お問い合わせ内容を記録しました。ご協力ありがとうございます！"); st.info("以下のリンクをクリックして、Gmailで内容を送信してください。")
+                st.success("お問い合わせ内容を記録しました。ご協力ありがとうございます！"); st.info("管理者にすぐに伝えたい場合は以下のリンクをクリックして、Gmailで内容を送信してください。")
                 st.markdown(f"**[Gmailを起動して管理者にメールを送信する]({gmail_link})**", unsafe_allow_html=True); st.cache_data.clear()
 
 def page_pl_analysis():
@@ -497,7 +497,7 @@ def page_pl_analysis():
                         ax.plot(df['wavelength_nm'], df['intensity'], label=label, linewidth=2.5)
                         all_dfs.append(df); filenames.append(uploaded_file.name)
                 if all_dfs:
-                    ax.set_title(f"PLスペクトル (中心波長: {center_wavelength_input} nm)")
+                    ax.set_title(f"PL spectrum (Center wavelength: {center_wavelength_input} nm)")
                     ax.set_xlabel("wavelength [nm]"); ax.set_ylabel("PL intensity")
                     ax.legend(loc='upper left', frameon=False, fontsize=14)
                     ax.grid(axis='y', linestyle='-', color='lightgray', zorder=0)
