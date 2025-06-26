@@ -452,7 +452,7 @@ def page_pl_analysis():
                     col_res2.metric(f"{cal2_wavelength}nmのピーク位置", f"{int(peak_pixel2)} pixel")
                     try:
                         delta_wave = float(cal2_wavelength - cal1_wavelength)
-                        delta_pixel = float(peak_pixel2 - peak_pixel1)
+                        delta_pixel = float(peak_pixel1 - peak_pixel2)
                         if delta_pixel == 0:
                             st.error("2つのピーク位置が同じです。異なる校正ファイルを選択するか、データを確認してください。")
                         else:
@@ -474,7 +474,7 @@ def page_pl_analysis():
         st.success(f"波長校正済みです。（校正係数: {st.session_state['pl_slope']:.4f} nm/pixel）")
         with st.container(border=True):
             center_wavelength_input = st.number_input(
-                "測定時の中心波長 (nm)", min_value=0, value=1650, step=10,
+                "測定時の中心波長 (nm)", min_value=0, value=1700, step=10,
                 help="この測定で装置に設定した中心波長を入力してください。凡例の自動整形にも使われます。"
             )
             uploaded_files = st.file_uploader("測定データファイル（複数選択可）をアップロード", type=['txt'], accept_multiple_files=True)
