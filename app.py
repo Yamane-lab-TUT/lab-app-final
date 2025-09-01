@@ -1,10 +1,10 @@
 # --------------------------------------------------------------------------
-# Yamane Lab Convenience Tool - Streamlit Application (v7.0 - Final Version)
+# Yamane Lab Convenience Tool - Streamlit Application (v7.1 - Final Version)
 #
-# v7.0:
-# - Fixes all previous SyntaxErrors and NameErrors.
-# - Implements @st.cache_data for efficient Google Sheets API calls.
+# v7.1:
+# - Fixes ModuleNotFoundError for MimeText.
 # - Addresses the Google Drive storage quota error by using Shared Drives.
+# - Re-implements the code in a way that minimizes the potential for SyntaxErrors.
 # - Integrates all requested features into a robust, single-file structure.
 # --------------------------------------------------------------------------
 
@@ -15,8 +15,6 @@ import os
 import io
 import re
 import json
-import base64
-import MimeText
 from datetime import datetime, time, timedelta
 from urllib.parse import quote as url_quote, urlencode
 import numpy as np
@@ -38,9 +36,12 @@ except:
         plt.rcParams['font.family'] = 'Yu Gothic'
     except:
         plt.rcParams['font.family'] = 'sans-serif'
-plt.rcParams['font.weight'] = 'bold'; plt.rcParams['axes.labelweight'] = 'bold'
-plt.rcParams['axes.linewidth'] = 1.5; plt.rcParams['xtick.major.width'] = 1.5
-plt.rcParams['ytick.major.width'] = 1.5; plt.rcParams['font.size'] = 14
+plt.rcParams['font.weight'] = 'bold'
+plt.rcParams['axes.labelweight'] = 'bold'
+plt.rcParams['axes.linewidth'] = 1.5
+plt.rcParams['xtick.major.width'] = 1.5
+plt.rcParams['ytick.major.width'] = 1.5
+plt.rcParams['font.size'] = 14
 plt.rcParams['axes.unicode_minus'] = False
 
 # Google Cloud related settings
@@ -134,8 +135,9 @@ def page_note_recording():
                     filename, url = upload_file_to_drive(drive_service, uploaded_file, folder_id, ep_memo)
                     if url:
                         row_data = [datetime.now().strftime("%Y%m%d_%H%M%S"), "エピノート", ep_category, ep_memo, filename, url]
-                        spreadsheet = gc.open(SPREADSHEET_NAME); spreadsheet.worksheet('エピノート_データ').append_row(row_data)
-                        st.success("エピノートを保存しました！"); st.cache_data.clear(); st.rerun()
+                        spreadsheet = gc.open(SPREADSHEET_NAME)
+                        spreadsheet.worksheet('エピノート_データ').append_row(row_data)
+                        st.success("エピノートを保存しました！"); st.cache_data.clear(); st.experimental_rerun()
                 else: st.error("写真をアップロードしてください。")
     elif note_type == "メンテノート":
         with st.form("mt_note_form", clear_on_submit=True):
@@ -147,8 +149,9 @@ def page_note_recording():
                 else:
                     filename, url = upload_file_to_drive(drive_service, uploaded_file, FOLDER_IDS['MT'], mt_memo)
                     row_data = [datetime.now().strftime("%Y%m%d_%H%M%S"), "メンテノート", mt_memo, filename, url]
-                    spreadsheet = gc.open(SPREADSHEET_NAME); spreadsheet.worksheet('メンテノート_データ').append_row(row_data)
-                    st.success("メンテノートを保存しました！"); st.cache_data.clear(); st.rerun()
+                    spreadsheet = gc.open(SPREADSHEET_NAME)
+                    spreadsheet.worksheet('メンテノート_データ').append_row(row_data)
+                    st.success("メンテノートを保存しました！"); st.cache_data.clear(); st.experimental_rerun()
 
 def page_note_list():
     st.header("📓 登録済みのノート一覧")
@@ -288,17 +291,34 @@ def page_minutes():
                 else:
                     filename, url = upload_file_to_drive(drive_service, audio_file, FOLDER_IDS['MINUTES'], title)
                     row_data = [datetime.now().strftime("%Y%m%d_%H%M%S"), title, filename, url, content]
-                    spreadsheet = gc.open(SPREADSHEET_NAME); spreadsheet.worksheet(minutes_sheet_name).append_row(row_data)
-                    st.success("議事録を保存しました。"); st.cache_data.clear(); st.rerun()
+                    spreadsheet = gc.open(SPREADSHEET_NAME)
+                    spreadsheet.worksheet(minutes_sheet_name).append_row(row_data)
+                    st.success("議事録を保存しました。"); st.cache_data.clear(); st.experimental_rerun()
 
 def page_qa():
     st.header("💡 山根研 知恵袋")
-    qa_sheet_name = '知恵袋_データ'; answers_sheet_name = '知恵袋_解答'
+    qa_sheet_name = '知恵袋_データ'
+    answers_sheet_name = '知恵袋_解答'
     
-    # NEW: Simple filtering via selectbox instead of tabs
-    qa_status_filter = st.selectbox("表示する質問のステータス", ["すべての質問", "未解決のみ", "解決済みのみ"])
+    st.subheader("新しい質問を投稿")
+    with st.form("new_question_form", clear_on_submit=True):
+        question_title = st.text_input("質問タイトル *")
+        question_content = st.text_area("質問内容 *", height=150)
+        uploaded_qa_file = st.file_uploader("参考ファイル（画像など）", type=["jpg", "jpeg", "png", "pdf"])
+        questioner_email = st.text_input("連絡先メールアドレス（任意）")
+        submitted = st.form_submit_button("質問を投稿")
+        if submitted:
+            if not question_title or not question_content: st.error("タイトルと内容は必須です。")
+            else:
+                filename, url = upload_file_to_drive(drive_service, uploaded_qa_file, FOLDER_IDS['QA'], question_title)
+                row_data = [datetime.now().strftime("%Y%m%d_%H%M%S"), question_title, question_content, questioner_email, filename, url, "未解決"]
+                spreadsheet = gc.open(SPREADSHEET_NAME)
+                spreadsheet.worksheet(qa_sheet_name).append_row(row_data)
+                st.success("質問を投稿しました。「質問と回答を見る」タブで確認してください。"); st.cache_data.clear(); st.experimental_rerun()
 
+    st.markdown("---")
     st.subheader("質問と回答を見る")
+
     df_qa = get_sheet_as_df(gc, SPREADSHEET_NAME, qa_sheet_name)
     df_answers = get_sheet_as_df(gc, SPREADSHEET_NAME, answers_sheet_name)
 
@@ -309,17 +329,7 @@ def page_qa():
     df_qa['タイムスタンプ_dt'] = pd.to_datetime(df_qa['タイムスタンプ'], format="%Y%m%d_%H%M%S")
     df_qa = df_qa.sort_values(by='タイムスタンプ_dt', ascending=False)
     
-    filtered_df_qa = df_qa.copy()
-    if qa_status_filter == "未解決のみ":
-        filtered_df_qa = filtered_df_qa[filtered_df_qa['ステータス'] == '未解決']
-    elif qa_status_filter == "解決済みのみ":
-        filtered_df_qa = filtered_df_qa[filtered_df_qa['ステータス'] == '解決済み']
-        
-    if filtered_df_qa.empty:
-        st.info("条件に一致する質問はありません。")
-        return
-        
-    options = {f"[{row['ステータス']}] {row['質問タイトル']} ({row['タイムスタンプ_dt'].strftime('%Y/%m/%d %H:%M:%S')})": row['タイムスタンプ'] for _, row in filtered_df_qa.iterrows()}
+    options = {f"[{row['ステータス']}] {row['質問タイトル']} ({row['タイムスタンプ_dt'].strftime('%Y/%m/%d %H:%M:%S')})": row['タイムスタンプ'] for _, row in df_qa.iterrows()}
     selected_ts = st.selectbox("質問を選択", ["---"] + list(options.keys()))
     
     if selected_ts != "---":
@@ -331,7 +341,7 @@ def page_qa():
             st.markdown(question['質問内容'])
             if question['添付ファイルURL']:
                 st.markdown(f"**添付ファイル:** [リンクを開く]({question['添付ファイルURL']})", unsafe_allow_html=True)
-            if question['ステータス'] == '未解決':
+            if question['ステータus'] == '未解決':
                 if st.button("この質問を解決済みにする", key=f"resolve_{question_id}"):
                     try:
                         spreadsheet = gc.open(SPREADSHEET_NAME)
@@ -339,7 +349,7 @@ def page_qa():
                         cell = qa_sheet_obj.find(question_id)
                         status_col_index = qa_sheet_obj.row_values(1).index("ステータス") + 1
                         qa_sheet_obj.update_cell(cell.row, status_col_index, "解決済み")
-                        st.success("ステータスを「解決済み」に更新しました。"); st.cache_data.clear(); st.rerun()
+                        st.success("ステータスを「解決済み」に更新しました。"); st.cache_data.clear(); st.experimental_rerun()
                     except Exception as e: st.error(f"更新に失敗しました: {e}")
 
         st.markdown("---")
@@ -363,24 +373,9 @@ def page_qa():
                     else:
                         filename, url = upload_file_to_drive(drive_service, answer_file, FOLDER_IDS['QA'], question['質問タイトル'])
                         row_data = [datetime.now().strftime("%Y%m%d_%H%M%S"), question['質問タイトル'], question_id, answer_content, answerer_name, "", filename, url]
-                        spreadsheet = gc.open(SPREADSHEET_NAME); spreadsheet.worksheet(answers_sheet_name).append_row(row_data)
-                        st.success("回答を投稿しました！"); st.cache_data.clear(); st.rerun()
-
-    st.markdown("---")
-    st.subheader("新しい質問を投稿する")
-    with st.form("new_question_form", clear_on_submit=True):
-        q_title = st.text_input("質問タイトル *"); q_content = st.text_area("質問内容 *", height=150)
-        q_email = st.text_input("連絡先メールアドレス（任意）"); q_file = st.file_uploader("参考ファイル（画像など）", type=["jpg", "jpeg", "png", "pdf"])
-        submitted = st.form_submit_button("質問を投稿")
-        if submitted:
-            if not q_title or not q_content: st.error("タイトルと内容は必須です。")
-            else:
-                filename, url = upload_file_to_drive(drive_service, q_file, FOLDER_IDS['QA'], q_title)
-                row_data = [datetime.now().strftime("%Y%m%d_%H%M%S"), q_title, q_content, q_email, filename, url, "未解決"]
-                spreadsheet = gc.open(SPREADSHEET_NAME); spreadsheet.worksheet(qa_sheet_name).append_row(row_data)
-                st.success("質問を投稿しました。「質問と回答を見る」タブで確認してください。"); st.cache_data.clear(); st.rerun()
-
-
+                        spreadsheet = gc.open(SPREADSHEET_NAME)
+                        spreadsheet.worksheet(answers_sheet_name).append_row(row_data)
+                        st.success("回答を投稿しました！"); st.cache_data.clear(); st.experimental_rerun()
 def page_handover():
     st.header("🔑 引き継ぎ情報の管理")
     handover_sheet_name = '引き継ぎ_データ'
@@ -433,38 +428,52 @@ def page_handover():
                     if handover_type == "マニュアル" and file: _, file_url = upload_file_to_drive(drive_service, file, FOLDER_IDS['HANDOVER'], title)
                     final_c1 = file_url or content1
                     row_data = [datetime.now().strftime("%Y%m%d_%H%M%S"), handover_type, title, final_c1, content2, "", memo]
-                    spreadsheet = gc.open(SPREADSHEET_NAME); spreadsheet.worksheet('引き継ぎ_データ').append_row(row_data); st.success("引き継ぎ情報を保存しました。"); st.cache_data.clear(); st.rerun()
+                    spreadsheet = gc.open(SPREADSHEET_NAME)
+                    spreadsheet.worksheet('引き継ぎ_データ').append_row(row_data)
+                    st.success("引き継ぎ情報を保存しました。"); st.cache_data.clear(); st.experimental_rerun()
 
 def page_inquiry():
     st.header("✉️ お問い合わせフォーム")
     inquiry_sheet_name = 'お問い合わせ_データ'
     st.info("このアプリに関するご意見、ご要望、バグ報告などはこちらからお送りください。")
     with st.form("inquiry_form", clear_on_submit=True):
-        category = st.selectbox("お問い合わせの種類", ["バグ報告", "機能改善要望", "その他"]); content = st.text_area("詳細内容 *", height=150); contact = st.text_input("連絡先（メールアドレスなど、返信が必要な場合）")
+        category = st.selectbox("お問い合わせの種類", ["バグ報告", "機能改善要望", "その他"])
+        content = st.text_area("詳細内容 *", height=150)
+        contact = st.text_input("連絡先（メールアドレスなど、返信が必要な場合）")
         submitted = st.form_submit_button("送信")
         if submitted:
             if not content: st.error("詳細内容を入力してください。")
             else:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S"); row_data = [timestamp, category, content, contact]
-                spreadsheet = gc.open(SPREADSHEET_NAME); spreadsheet.worksheet(inquiry_sheet_name).append_row(row_data)
-                subject = f"【研究室便利屋さん】お問い合わせ: {category}"; body = f"新しいお問い合わせが届きました。\n\n種類: {category}\n内容:\n{content}\n\n連絡先: {contact or 'なし'}\nタイムスタンプ: {timestamp}"
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                row_data = [timestamp, category, content, contact]
+                spreadsheet = gc.open(SPREADSHEET_NAME)
+                spreadsheet.worksheet(inquiry_sheet_name).append_row(row_data)
+                subject = f"【研究室便利屋さん】お問い合わせ: {category}"
+                body = (f"新しいお問い合わせが届きました。\n\n"
+                        f"種類: {category}\n"
+                        f"内容:\n{content}\n\n"
+                        f"連絡先: {contact or 'なし'}\n"
+                        f"タイムスタンプ: {timestamp}")
                 gmail_link = generate_gmail_link(INQUIRY_RECIPIENT_EMAIL, subject, body)
-                st.success("お問い合わせ内容を記録しました。ご協力ありがとうございます！"); st.info("管理者にすぐに伝えたい場合は以下のリンクをクリックして、Gmailで内容を送信してください。")
-                st.markdown(f"**[Gmailを起動して管理者にメールを送信する]({gmail_link})**", unsafe_allow_html=True); st.cache_data.clear(); st.rerun()
+                st.success("お問い合わせ内容を記録しました。ご協力ありがとうございます！")
+                st.info("管理者にすぐに伝えたい場合は以下のリンクをクリックして、Gmailで内容を送信してください。")
+                st.markdown(f"**[Gmailを起動して管理者にメールを送信する]({gmail_link})**", unsafe_allow_html=True)
+                st.cache_data.clear()
+                st.experimental_rerun()
 
 def main():
-    gc, drive_service, calendar_service = initialize_google_services()
+    st.title("🛠️ 山根研 便利屋さん")
     st.sidebar.header("メニュー")
     menu_options = ["ノート記録", "ノート一覧", "カレンダー", "議事録管理", "山根研知恵袋", "引き継ぎ情報", "お問い合わせフォーム"]
     selected_menu = st.sidebar.radio("機能を選択", menu_options)
     
-    if selected_menu == "ノート記録": page_note_recording(); st.stop()
-    elif selected_menu == "ノート一覧": page_note_list(); st.stop()
-    elif selected_menu == "カレンダー": page_calendar(); st.stop()
-    elif selected_menu == "議事録管理": page_minutes(); st.stop()
-    elif selected_menu == "山根研知恵袋": page_qa(); st.stop()
-    elif selected_menu == "引き継ぎ情報": page_handover(); st.stop()
-    elif selected_menu == "お問い合わせフォーム": page_inquiry(); st.stop()
+    if selected_menu == "ノート記録": page_note_recording()
+    elif selected_menu == "ノート一覧": page_note_list()
+    elif selected_menu == "カレンダー": page_calendar()
+    elif selected_menu == "議事録管理": page_minutes()
+    elif selected_menu == "山根研知恵袋": page_qa()
+    elif selected_menu == "引き継ぎ情報": page_handover()
+    elif selected_menu == "お問い合わせフォーム": page_inquiry()
 
 if __name__ == "__main__":
     main()
