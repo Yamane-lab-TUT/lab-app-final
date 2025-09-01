@@ -28,7 +28,7 @@ st.set_page_config(page_title="山根研 便利屋さん", layout="wide")
 # --- Google Cloud & App Settings ---
 # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
 # ↓↓↓↓↓↓ 【重要】以前のステップで作成したご自身の「バケット名」に書き換えてください ↓↓↓↓↓↓
-CLOUD_STORAGE_BUCKET_NAME = "your-globally-unique-bucket-name"  # 例: "yamane-lab-app-files-2025"
+CLOUD_STORAGE_BUCKET_NAME = "yamane-lab-app-files"  # 例: "yamane-lab-app-files-2025"
 # ↑↑↑↑↑↑ 【重要】以前のステップで作成したご自身の「バケット名」に書き換えてください ↑↑↑↑↑↑
 # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
 
@@ -409,3 +409,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
