@@ -117,25 +117,44 @@ def load_pl_data(uploaded_file):
     """
     アップロードされたtxtファイルを読み込み、Pandas DataFrameを返す関数。
     データは2列（pixel, intensity）の形式を想定しています。
+    様々なファイル形式に対応するため、複数の読み込み方法を試します。
     """
     try:
-        # sep='\s+'は、タブ、スペース、複数のスペースなど、あらゆる空白文字を区切り文字として認識します。
+        # 方法1: 標準的な空白区切り（最も一般的）
         df = pd.read_csv(uploaded_file, sep='\s+', header=None, names=['pixel', 'intensity'])
+        if not df.empty and len(df.columns) == 2:
+            df.dropna(inplace=True)
+            if not df.empty:
+                return df
+
+        # 方法2: ヘッダーをスキップし、後から列名を指定
+        # ファイルを一度読み込み、データ部分を特定します。
+        content = uploaded_file.getvalue().decode('utf-8').splitlines()
         
-        # データが確実に数値であることを確認するために、型を変換します。
-        # errors='coerce' は、数値に変換できない値をNaNに変換します。
+        # 連続した数値データが始まる行を特定
+        data_start_line = 0
+        for i, line in enumerate(content):
+            # 最初に見つかった数値データ行をデータの開始とみなす
+            if any(char.isdigit() for char in line):
+                data_start_line = i
+                break
+        
+        # StringIOを使って、データ部分だけを読み込む
+        data_string_io = io.StringIO("\n".join(content[data_start_line:]))
+        
+        df = pd.read_csv(data_string_io, sep='\s+', header=None, names=['pixel', 'intensity'])
+
+        # データが確実に数値であることを確認し、NaNを削除
         df['pixel'] = pd.to_numeric(df['pixel'], errors='coerce')
         df['intensity'] = pd.to_numeric(df['intensity'], errors='coerce')
-        
-        # NaNを含む行をすべて削除します。
         df.dropna(inplace=True)
-        
-        # DataFrameが空ではないか確認
+
         if df.empty:
-            st.warning(f"警告：'{uploaded_file.name}'に有効なデータが含まれていません。")
+            st.warning(f"警告：'{uploaded_file.name}'に有効なデータが含まれていません。ファイルの内容を確認してください。")
             return None
         
         return df
+
     except Exception as e:
         st.error(f"エラー：'{uploaded_file.name}'の読み込みに失敗しました。ファイル形式を確認してください。({e})")
         return None
@@ -538,3 +557,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
