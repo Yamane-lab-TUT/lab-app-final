@@ -1,10 +1,8 @@
 # --------------------------------------------------------------------------
-# Yamane Lab Convenience Tool - Streamlit Application (v7.3 - Final Version)
+# Yamane Lab Convenience Tool - Streamlit Application (v8.1 - Final Version)
 #
-# v7.3:
-# - Fixes a ModuleNotFoundError.
-# - Addresses the Google Drive storage quota error by using Shared Drives.
-# - Implements a robust authentication logic that works for both local and cloud environments.
+# v8.1:
+# - Implements a robust authentication logic that works exclusively with Streamlit Cloud's secrets.
 # - Integrates all requested features into a robust, single-file structure.
 # --------------------------------------------------------------------------
 
@@ -45,7 +43,6 @@ plt.rcParams['font.size'] = 14
 plt.rcParams['axes.unicode_minus'] = False
 
 # Google Cloud related settings
-SERVICE_ACCOUNT_FILE = 'research-lab-app-42f3c0b5d5b1.json'
 SPREADSHEET_NAME = 'エピノート'
 FOLDER_IDS = {
     'EP_D1': '1KQEeEsHChqtrAIvP91ILnf6oS4fTVi1p',
@@ -67,20 +64,15 @@ def initialize_google_services():
             'https://www.googleapis.com/auth/drive',
             'https://www.googleapis.com/auth/calendar'
         ]
-
-        if "gcs_credentials" in st.secrets:
-            # Streamlit Cloud環境での認証
-            creds_info = st.secrets["gcs_credentials"]
-            creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
-            gc = gspread.service_account_from_dict(creds_info)
-        else:
-            # ローカル環境での認証
-            if not os.path.exists(SERVICE_ACCOUNT_FILE):
-                st.error(f"❌ 致命的なエラー: サービスアカウントのJSONキーファイルが見つかりません。\nファイル名 '{SERVICE_ACCOUNT_FILE}' を確認し、app.pyと同じフォルダに置いてください。")
-                st.stop()
-            creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=scopes)
-            gc = gspread.service_account(filename=SERVICE_ACCOUNT_FILE)
-
+        
+        if "gcs_credentials" not in st.secrets:
+            st.error(f"❌ 致命的なエラー: Streamlit CloudのSecretsに認証情報が見つかりません。\n[gcs_credentials]というキーで認証情報を設定してください。")
+            st.stop()
+        
+        creds_info = st.secrets["gcs_credentials"]
+        creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
+        gc = gspread.service_account_from_dict(creds_info)
+        
         drive_service = build('drive', 'v3', credentials=creds)
         calendar_service = build('calendar', 'v3', credentials=creds)
         
@@ -360,7 +352,7 @@ def page_qa():
             st.markdown(question['質問内容'])
             if question['添付ファイルURL']:
                 st.markdown(f"**添付ファイル:** [リンクを開く]({question['添付ファイルURL']})", unsafe_allow_html=True)
-            if question['ステータス'] == '未解決':
+            if question['ステータus'] == '未解決':
                 if st.button("この質問を解決済みにする", key=f"resolve_{question_id}"):
                     try:
                         spreadsheet = gc.open(SPREADSHEET_NAME)
@@ -445,7 +437,7 @@ def page_handover():
                 if selected_row['内容1']: st.markdown(f"**ファイル/URL:** [リンクを開く]({selected_row['内容1']})")
                 st.write("**メモ:**"); st.text(selected_row['メモ'])
             elif selected_row['種類'] == "連絡先": st.write(f"**電話番号:** {selected_row['内容1']}"); st.write(f"**メール:** {selected_row['内容2']}"); st.write("**メモ:**"); st.text(selected_row['メモ'])
-            elif selected_row['種類'] == "パスワード": st.write(f"**サービス名/場所:** {selected_row['タイトル']}"); st.write(f"**ユーザー名:** {selected_row['内容1']}"); st.write(f"**パスワード:** {selected_row['内容2']}"); st.write("**メモ:**"); st.text(selected_row['メモ'])
+            elif selected_row['種類'] == "パスワード": st.write(f"**サービス名/場所:** {selected_row['タイトル']}"); st.write(f"**ユーザー名:** {selected_row['内容1']}"); st.write(f"**パスワード:** {selected_row['内容2']}"); st.write("**メモ:**"); st.text(selected_row['メモ']}")
             else: st.write(f"**内容:**"); st.markdown(selected_row['内容1']); st.write("**メモ:**"); st.text(selected_row['メモ'])
     with tab2:
         st.subheader("新しい引き継ぎ情報を登録")
@@ -496,8 +488,7 @@ def page_inquiry():
                 st.success("お問い合わせ内容を記録しました。ご協力ありがとうございます！")
                 st.info("管理者にすぐに伝えたい場合は以下のリンクをクリックして、Gmailで内容を送信してください。")
                 st.markdown(f"**[Gmailを起動して管理者にメールを送信する]({gmail_link})**", unsafe_allow_html=True)
-                st.cache_data.clear()
-                st.experimental_rerun()
+                st.cache_data.clear(); st.experimental_rerun()
 
 def main():
     st.title("🛠️ 山根研 便利屋さん")
