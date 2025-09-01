@@ -341,7 +341,7 @@ def page_qa():
         st.info("条件に一致する質問はありません。")
         return
         
-    options = {f"[{row['ステータus']}] {row['質問タイトル']} ({row['タイムスタンプ_dt'].strftime('%Y/%m/%d %H:%M:%S')})": row['タイムスタンプ'] for _, row in filtered_df_qa.iterrows()}
+    options = {f"[{row['ステータス']}] {row['質問タイトル']} ({row['タイムスタンプ_dt'].strftime('%Y/%m/%d %H:%M:%S')})": row['タイムスタンプ'] for _, row in filtered_df_qa.iterrows()}
     selected_ts = st.selectbox("質問を選択", ["---"] + list(options.keys()))
     
     if selected_ts != "---":
