@@ -27,6 +27,7 @@ from googleapiclient.discovery import build
 from google.cloud import storage # Cloud Storageライブラリ
 from google.auth.exceptions import DefaultCredentialsError
 from google.api_core.exceptions import GoogleAPIError
+from google.api_core import exceptions
 
 # --- Global Configuration & Setup ---
 st.set_page_config(page_title="山根研 便利屋さん", layout="wide")
@@ -45,6 +46,7 @@ INQUIRY_RECIPIENT_EMAIL = 'kyuno.yamato.ns@tut.ac.jp'
 # --- Initialize Google Services ---
 @st.cache_resource(show_spinner="Googleサービスに接続中...")
 def initialize_google_services():
+    """Googleサービス（Spreadsheet, Calendar, Storage）を初期化し、認証情報を設定する。"""
     try:
         scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/calendar', 'https://www.googleapis.com/auth/devstorage.read_write']
         
@@ -71,6 +73,7 @@ gc, calendar_service, storage_client = initialize_google_services()
 # --- Utility Functions ---
 @st.cache_data(ttl=300, show_spinner="シート「{sheet_name}」を読み込み中...")
 def get_sheet_as_df(_gc, spreadsheet_name, sheet_name):
+    """Google SpreadsheetのシートをPandas DataFrameとして取得する。"""
     try:
         worksheet = _gc.open(spreadsheet_name).worksheet(sheet_name)
         data = worksheet.get_all_values()
@@ -81,8 +84,8 @@ def get_sheet_as_df(_gc, spreadsheet_name, sheet_name):
     except Exception:
         st.warning(f"シート「{sheet_name}」を読み込めません。空の可能性があります。"); return pd.DataFrame()
 
-# Cloud Storageへアップロードし、「署名付きURL」を生成するよう修正
 def upload_file_to_gcs(storage_client, bucket_name, file_uploader_obj, memo_content=""):
+    """ファイルをGoogle Cloud Storageにアップロードし、署名付きURLを生成する。"""
     if not file_uploader_obj: return "", ""
     try:
         bucket = storage_client.bucket(bucket_name)
@@ -107,9 +110,9 @@ def upload_file_to_gcs(storage_client, bucket_name, file_uploader_obj, memo_cont
         st.error(f"ファイルアップロード中にエラー: {e}"); return "アップロード失敗", ""
 
 def generate_gmail_link(recipient, subject, body):
+    """Gmailの新規作成リンクを生成する。"""
     return f"https://mail.google.com/mail/?view=cm&fs=1&to={url_quote(recipient)}&su={url_quote(subject)}&body={url_quote(body)}"
 
-# PLデータ解析用の読み込み関数
 def load_pl_data(uploaded_file):
     """
     アップロードされたtxtファイルを読み込み、Pandas DataFrameを返す関数。
@@ -247,7 +250,7 @@ def page_calendar():
                             else: date_str, time_str = datetime.strptime(start, "%Y-%m-%d").strftime("%Y/%m/%d (%a)"), "終日"
                             event_data.append({"日付": date_str, "時刻": time_str, "件名": event['summary'], "場所": event.get('location', '')})
                         st.dataframe(pd.DataFrame(event_data), use_container_width=True)
-                except GoogleAPIError as e: st.error(f"カレンダーの読み込みに失敗しました: {e}")
+                except exceptions.GoogleAPIError as e: st.error(f"カレンダーの読み込みに失敗しました: {e}")
     with tab2:
         st.subheader("新しい予定を追加")
         with st.form("add_event_form", clear_on_submit=True):
@@ -270,7 +273,7 @@ def page_calendar():
                     try:
                         created_event = calendar_service.events().insert(calendarId=DEFAULT_CALENDAR_ID, body=event_body).execute()
                         st.success(f"予定「{created_event.get('summary')}」を追加しました。"); st.markdown(f"[カレンダーで確認]({created_event.get('htmlLink')})")
-                    except GoogleAPIError as e: st.error(f"予定の追加に失敗しました: {e}")
+                    except exceptions.GoogleAPIError as e: st.error(f"予定の追加に失敗しました: {e}")
 
 def page_minutes():
     st.header("🎙️ 会議の議事録の管理"); minutes_sheet_name = '議事録_データ'
@@ -518,7 +521,6 @@ def page_pl_analysis():
 def main():
     st.title("🛠️ 山根研 便利屋さん")
     st.sidebar.header("メニュー")
-    # PLデータ解析ページを追加
     menu = ["ノート記録", "ノート一覧", "カレンダー", "議事録管理", "山根研知恵袋", "引き継ぎ情報", "お問い合わせフォーム", "PLデータ解析"]
     selected_page = st.sidebar.radio("機能を選択", menu)
 
