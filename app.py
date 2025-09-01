@@ -429,8 +429,8 @@ def page_pl_analysis():
                 df1 = load_pl_data(cal1_file)
                 df2 = load_pl_data(cal2_file)
                 if df1 is not None and df2 is not None:
-                    peak_pixel1 = df1.loc[df1['intensity'].idxmax()]['pixel']
-                    peak_pixel2 = df2.loc[df2['intensity'].idxmax()]['pixel']
+                    peak_pixel1 = df1['pixel'].iloc[df1['intensity'].idxmax()]
+                    peak_pixel2 = df2['pixel'].iloc[df2['intensity'].idxmax()]
                     st.write("---"); st.subheader("校正結果")
                     col_res1, col_res2, col_res3 = st.columns(3)
                     col_res1.metric(f"{cal1_wavelength}nmのピーク位置", f"{int(peak_pixel1)} pixel")
@@ -524,4 +524,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
