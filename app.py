@@ -1,54 +1,37 @@
-import json
-from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+import os, pickle
+
+# Drive APIのスコープ
+SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+
+def get_credentials():
+    creds = None
+    # 保存済みトークンがあれば読み込み
+    if os.path.exists("token.pickle"):
+        with open("token.pickle", "rb") as token:
+            creds = pickle.load(token)
+    # トークンが無い場合は新しく取得
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file("client_id.json", SCOPES)
+            creds = flow.run_local_server(port=0)
+        # 保存
+        with open("token.pickle", "wb") as token:
+            pickle.dump(creds, token)
+    return creds
+
+# 認証
+creds = get_credentials()
+drive = build("drive", "v3", credentials=creds)
+
+# テストアップロード
 from googleapiclient.http import MediaFileUpload
-import streamlit as st
+file_metadata = {"name": "test_upload.txt"}
+media = MediaFileUpload("test_upload.txt", mimetype="text/plain")
+uploaded = drive.files().create(body=file_metadata, media_body=media, fields="id, webViewLink").execute()
 
-# --- 認証 ---
-service_info = json.loads(st.secrets["gcs"]["gcs_credentials"])
-credentials = service_account.Credentials.from_service_account_info(service_info)
-
-drive = build("drive", "v3", credentials=credentials)
-
-st.write("✅ 認証完了しました")
-
-# --- 1. サービスアカウントで見えるファイル一覧を取得 ---
-try:
-    results = drive.files().list(
-        pageSize=5,
-        fields="files(id, name, mimeType, parents)"
-    ).execute()
-    files = results.get("files", [])
-    if not files:
-        st.warning("⚠️ サービスアカウントから見えるファイルがありません（共有されていない可能性あり）")
-    else:
-        st.success("✅ サービスアカウントで見えるファイル一覧")
-        for f in files:
-            st.write(f"{f['name']} ({f['id']}, {f['mimeType']}, parents={f.get('parents')})")
-except Exception as e:
-    st.error(f"❌ ファイル一覧取得エラー: {e}")
-
-# --- 2. テストアップロード ---
-TEST_FOLDER_ID = "1YllkIwYuV3IqY4_i0YoyY43SAB-U8-0i"  # 例: "1a2B3cD4EfGhIjK..."
-TEST_FILENAME = "test_upload.txt"
-
-try:
-    # テストファイルを作成
-    with open(TEST_FILENAME, "w") as f:
-        f.write("Drive API upload test")
-
-    media = MediaFileUpload(TEST_FILENAME, mimetype="text/plain")
-    file_metadata = {
-        "name": TEST_FILENAME,
-        "parents": [TEST_FOLDER_ID]
-    }
-    uploaded = drive.files().create(
-        body=file_metadata,
-        media_body=media,
-        fields="id, webViewLink"
-    ).execute()
-
-    st.success(f"✅ アップロード成功: {uploaded['webViewLink']}")
-except Exception as e:
-    st.error(f"❌ アップロードエラー: {e}")
-
+print("✅ アップロード成功:", uploaded["webViewLink"])
