@@ -1,7 +1,7 @@
 # --------------------------------------------------------------------------
-# Yamane Lab Convenience Tool - Streamlit Application (v8.3 - Final Version)
+# Yamane Lab Convenience Tool - Streamlit Application (v8.4 - Final Version)
 #
-# v8.3:
+# v8.4:
 # - Fixes a SyntaxError: unterminated string literal in page_handover function.
 # - Implements a robust authentication logic that works exclusively with Streamlit Cloud's secrets.
 # - Integrates all requested features into a robust, single-file structure.
@@ -91,7 +91,16 @@ def get_sheet_as_df(_gc, spreadsheet_name, sheet_name):
         spreadsheet = _gc.open(spreadsheet_name)
         worksheet = spreadsheet.worksheet(sheet_name)
         data = worksheet.get_all_values()
-        if not data or len(data) < 1: return pd.DataFrame()
+        if not data: return pd.DataFrame()
+        
+        # Check if data contains only headers or no data
+        if len(data) < 2:
+            # If only headers exist, return an empty DataFrame with those headers
+            if len(data) == 1:
+                return pd.DataFrame(columns=data[0])
+            else:
+                return pd.DataFrame()
+        
         headers = data[0]
         df = pd.DataFrame(data[1:], columns=headers)
         return df
