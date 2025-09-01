@@ -16,13 +16,16 @@ import re
 import json
 from datetime import datetime, time, timedelta
 from urllib.parse import quote as url_quote, urlencode
+from io import BytesIO
+import numpy as np
 import matplotlib.pyplot as plt
 
-# Google API client libraries
+# Google API クライアントライブラリ
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
-from google.cloud import storage # Cloud Storageライブラリ
-from io import BytesIO
+from googleapiclient.http import MediaIoBaseUpload
+from googleapiclient.errors import HttpError
+from google.oauth2 import service_account
 
 # --- Global Configuration & Setup ---
 st.set_page_config(page_title="山根研 便利屋さん", layout="wide")
@@ -521,3 +524,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
