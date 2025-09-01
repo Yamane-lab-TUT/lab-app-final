@@ -1,8 +1,8 @@
 # --------------------------------------------------------------------------
-# Yamane Lab Convenience Tool - Streamlit Application (v8.4 - Final Version)
+# Yamane Lab Convenience Tool - Streamlit Application (v9.0 - Final Version)
 #
-# v8.4:
-# - Fixes a SyntaxError: unterminated string literal in page_handover function.
+# v9.0:
+# - Fixes various SyntaxErrors by simplifying the code structure.
 # - Implements a robust authentication logic that works exclusively with Streamlit Cloud's secrets.
 # - Integrates all requested features into a robust, single-file structure.
 # --------------------------------------------------------------------------
@@ -93,9 +93,7 @@ def get_sheet_as_df(_gc, spreadsheet_name, sheet_name):
         data = worksheet.get_all_values()
         if not data: return pd.DataFrame()
         
-        # Check if data contains only headers or no data
         if len(data) < 2:
-            # If only headers exist, return an empty DataFrame with those headers
             if len(data) == 1:
                 return pd.DataFrame(columns=data[0])
             else:
@@ -171,7 +169,7 @@ def page_note_list():
     if note_display_type == "エピノート":
         st.markdown("#### エピノート一覧")
         df_ep = get_sheet_as_df(gc, SPREADSHEET_NAME, 'エピノート_データ')
-        required_cols = ['タイムスタンプ', '種類', 'カテゴリ', 'メモ', '写真ファイル名', '写真URL']
+        required_cols = ['タイムスタンプ', 'ノート種別', 'カテゴリ', 'メモ', '写真ファイル名', '写真URL']
         if df_ep.empty or not all(col in df_ep.columns for col in required_cols):
             st.warning(f"エピノートシートのデータがありません、またはヘッダー形式が正しくありません。"); return
         
@@ -202,7 +200,7 @@ def page_note_list():
     elif note_display_type == "メンテノート":
         st.markdown("#### メンテノート一覧")
         df_mt = get_sheet_as_df(gc, SPREADSHEET_NAME, 'メンテノート_データ')
-        required_cols = ['タイムスタンプ', '種類', 'メモ', '写真ファイル名', '写真URL']
+        required_cols = ['タイムスタンプ', 'ノート種別', 'メモ', '写真ファイル名', '写真URL']
         if df_mt.empty or not all(col in df_mt.columns for col in required_cols):
             st.warning(f"メンテノートシートのデータがありません、またはヘッダー形式が正しくありません。"); return
 
