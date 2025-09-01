@@ -1,10 +1,11 @@
 # --------------------------------------------------------------------------
-# Yamane Lab Convenience Tool - Streamlit Application (v14.0 - Signed URL Final)
+# Yamane Lab Convenience Tool - Streamlit Application (v15.0)
 #
-# v14.0:
-# - Switches to using Signed URLs for GCS objects, bypassing the need for
-#   public buckets. This is a more secure and robust method.
-# - Requires the "Service Account Token Creator" IAM role.
+# v15.0:
+# - Adds a new feature: "PL Data Analysis" page.
+# - The page allows for wavelength calibration and PL spectrum analysis.
+# - Requires matplotlib and pandas for plotting and data handling.
+# - Includes robust error handling for file uploads and data processing.
 # --------------------------------------------------------------------------
 
 import streamlit as st
@@ -14,18 +15,18 @@ import os
 import io
 import re
 import json
+import matplotlib.pyplot as plt
+import numpy as np
 from datetime import datetime, time, timedelta
 from urllib.parse import quote as url_quote, urlencode
 from io import BytesIO
-import numpy as np
-import matplotlib.pyplot as plt
 
-# Google API クライアントライブラリ
+# Google API client libraries
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
-from googleapiclient.errors import HttpError
-from google.oauth2 import service_account
+from google.cloud import storage # Cloud Storageライブラリ
+from google.auth.exceptions import DefaultCredentialsError
+from google.api_core.exceptions import GoogleAPIError
 
 # --- Global Configuration & Setup ---
 st.set_page_config(page_title="山根研 便利屋さん", layout="wide")
@@ -80,7 +81,7 @@ def get_sheet_as_df(_gc, spreadsheet_name, sheet_name):
     except Exception:
         st.warning(f"シート「{sheet_name}」を読み込めません。空の可能性があります。"); return pd.DataFrame()
 
-# ★★★★★ Cloud Storageへアップロードし、「署名付きURL」を生成するよう修正 ★★★★★
+# Cloud Storageへアップロードし、「署名付きURL」を生成するよう修正
 def upload_file_to_gcs(storage_client, bucket_name, file_uploader_obj, memo_content=""):
     if not file_uploader_obj: return "", ""
     try:
@@ -108,30 +109,35 @@ def upload_file_to_gcs(storage_client, bucket_name, file_uploader_obj, memo_cont
 def generate_gmail_link(recipient, subject, body):
     return f"https://mail.google.com/mail/?view=cm&fs=1&to={url_quote(recipient)}&su={url_quote(subject)}&body={url_quote(body)}"
 
-# PLデータ解析用のユーティリティ関数（ユーザーがデータ形式に合わせて実装する必要があります）
+# PLデータ解析用の読み込み関数
 def load_pl_data(uploaded_file):
     """
     アップロードされたtxtファイルを読み込み、Pandas DataFrameを返す関数。
     データは2列（pixel, intensity）の形式を想定しています。
     """
     try:
-        # sep="\t" は、データがタブ区切りである場合に適用されます。
-        # ファイル形式に合わせて変更してください。
-        df = pd.read_csv(uploaded_file, sep="\t", header=None, names=['pixel', 'intensity'])
-
+        # sep='\s+'は、タブ、スペース、複数のスペースなど、あらゆる空白文字を区切り文字として認識します。
+        df = pd.read_csv(uploaded_file, sep='\s+', header=None, names=['pixel', 'intensity'])
+        
         # データが確実に数値であることを確認するために、型を変換します。
+        # errors='coerce' は、数値に変換できない値をNaNに変換します。
         df['pixel'] = pd.to_numeric(df['pixel'], errors='coerce')
         df['intensity'] = pd.to_numeric(df['intensity'], errors='coerce')
-
-        # 非数値の行を削除します (NaNを含む行)
+        
+        # NaNを含む行をすべて削除します。
         df.dropna(inplace=True)
-
+        
+        # DataFrameが空ではないか確認
+        if df.empty:
+            st.warning(f"警告：'{uploaded_file.name}'に有効なデータが含まれていません。")
+            return None
+        
         return df
     except Exception as e:
-        st.error(f"データの読み込みに失敗しました。ファイル形式を確認してください。エラー: {e}")
+        st.error(f"エラー：'{uploaded_file.name}'の読み込みに失敗しました。ファイル形式を確認してください。({e})")
         return None
 
-# --- UI Page Functions (これ以降は変更ありません) ---
+# --- UI Page Functions ---
 def page_note_recording():
     st.header("📝 エピノート・メンテノートの記録")
     note_type = st.radio("どちらを登録しますか？", ("エピノート", "メンテノート"), horizontal=True)
@@ -241,7 +247,7 @@ def page_calendar():
                             else: date_str, time_str = datetime.strptime(start, "%Y-%m-%d").strftime("%Y/%m/%d (%a)"), "終日"
                             event_data.append({"日付": date_str, "時刻": time_str, "件名": event['summary'], "場所": event.get('location', '')})
                         st.dataframe(pd.DataFrame(event_data), use_container_width=True)
-                except HttpError as e: st.error(f"カレンダーの読み込みに失敗しました: {e}")
+                except GoogleAPIError as e: st.error(f"カレンダーの読み込みに失敗しました: {e}")
     with tab2:
         st.subheader("新しい予定を追加")
         with st.form("add_event_form", clear_on_submit=True):
@@ -264,7 +270,7 @@ def page_calendar():
                     try:
                         created_event = calendar_service.events().insert(calendarId=DEFAULT_CALENDAR_ID, body=event_body).execute()
                         st.success(f"予定「{created_event.get('summary')}」を追加しました。"); st.markdown(f"[カレンダーで確認]({created_event.get('htmlLink')})")
-                    except HttpError as e: st.error(f"予定の追加に失敗しました: {e}")
+                    except GoogleAPIError as e: st.error(f"予定の追加に失敗しました: {e}")
 
 def page_minutes():
     st.header("🎙️ 会議の議事録の管理"); minutes_sheet_name = '議事録_データ'
@@ -417,104 +423,102 @@ def page_inquiry():
                 st.cache_data.clear()
             else: st.error("詳細内容を入力してください。")
 
-def page_pl_analysis():
-    st.header("🔬 PLデータ解析")
-    if 'pl_calibrated' not in st.session_state:
-        st.session_state['pl_calibrated'] = False
-        st.session_state['pl_slope'] = 0.0
-
-    with st.expander("ステップ1：波長校正", expanded=True):
-        st.write("2つの基準波長の反射光データをアップロードして、分光器の傾き（nm/pixel）を校正します。")
-        col1, col2 = st.columns(2)
-        with col1:
-            cal1_wavelength = st.number_input("基準波長1 (nm)", value=1500)
-            cal1_file = st.file_uploader(f"{cal1_wavelength}nm の校正ファイル (.txt)", type=['txt'], key="cal1")
-        with col2:
-            cal2_wavelength = st.number_input("基準波長2 (nm)", value=1570)
-            cal2_file = st.file_uploader(f"{cal2_wavelength}nm の校正ファイル (.txt)", type=['txt'], key="cal2")
-        if st.button("校正を実行", key="run_calibration"):
-            if cal1_file and cal2_file:
-                df1 = load_pl_data(cal1_file)
-                df2 = load_pl_data(cal2_file)
-                if df1 is not None and df2 is not None:
+def page_pl_analysis(): 
+    st.header("🔬 PLデータ解析") 
+    with st.expander("ステップ1：波長校正", expanded=True): 
+        st.write("2つの基準波長の反射光データをアップロードして、分光器の傾き（nm/pixel）を校正します。") 
+        col1, col2 = st.columns(2) 
+        with col1: 
+            cal1_wavelength = st.number_input("基準波長1 (nm)", value=1500) 
+            cal1_file = st.file_uploader(f"{cal1_wavelength}nm の校正ファイル (.txt)", type=['txt'], key="cal1") 
+        with col2: 
+            cal2_wavelength = st.number_input("基準波長2 (nm)", value=1570) 
+            cal2_file = st.file_uploader(f"{cal2_wavelength}nm の校正ファイル (.txt)", type=['txt'], key="cal2") 
+        if st.button("校正を実行", key="run_calibration"): 
+            if cal1_file and cal2_file: 
+                df1 = load_pl_data(cal1_file) 
+                df2 = load_pl_data(cal2_file) 
+                if df1 is not None and df2 is not None: 
+                    # ピーク位置を求める
                     peak_pixel1 = df1['pixel'].iloc[df1['intensity'].idxmax()]
                     peak_pixel2 = df2['pixel'].iloc[df2['intensity'].idxmax()]
-                    st.write("---"); st.subheader("校正結果")
-                    col_res1, col_res2, col_res3 = st.columns(3)
-                    col_res1.metric(f"{cal1_wavelength}nmのピーク位置", f"{int(peak_pixel1)} pixel")
-                    col_res2.metric(f"{cal2_wavelength}nmのピーク位置", f"{int(peak_pixel2)} pixel")
-                    try:
-                        delta_wave = float(cal2_wavelength - cal1_wavelength)
-                        delta_pixel = float(peak_pixel1 - peak_pixel2)
-                        if delta_pixel == 0:
-                            st.error("2つのピーク位置が同じです。異なる校正ファイルを選択するか、データを確認してください。")
-                        else:
-                            slope = delta_wave / delta_pixel
-                            col_res3.metric("校正係数 (nm/pixel)", f"{slope:.4f}")
-                            st.session_state['pl_calibrated'] = True
-                            st.session_state['pl_slope'] = slope
-                            st.success("校正係数を保存しました。ステップ2に進んでください。")
-                    except Exception as e:
-                        st.error(f"校正パラメータの計算中にエラーが発生しました: {e}")
-            else:
-                st.warning("両方の校正ファイルをアップロードしてください。")
+                    st.write("---"); st.subheader("校正結果") 
+                    col_res1, col_res2, col_res3 = st.columns(3) 
+                    col_res1.metric(f"{cal1_wavelength}nmのピーク位置", f"{int(peak_pixel1)} pixel") 
+                    col_res2.metric(f"{cal2_wavelength}nmのピーク位置", f"{int(peak_pixel2)} pixel") 
+                    try: 
+                        delta_wave = float(cal2_wavelength - cal1_wavelength) 
+                        delta_pixel = float(peak_pixel1 - peak_pixel2) 
+                        if delta_pixel == 0: 
+                            st.error("2つのピーク位置が同じです。異なる校正ファイルを選択するか、データを確認してください。") 
+                        else: 
+                            slope = delta_wave / delta_pixel 
+                            col_res3.metric("校正係数 (nm/pixel)", f"{slope:.4f}") 
+                            st.session_state['pl_calibrated'] = True 
+                            st.session_state['pl_slope'] = slope 
+                            st.success("校正係数を保存しました。ステップ2に進んでください。") 
+                    except Exception as e: 
+                        st.error(f"校正パラメータの計算中にエラーが発生しました: {e}") 
+            else: 
+                st.warning("両方の校正ファイルをアップロードしてください。") 
 
-    st.write("---")
-    st.subheader("ステップ2：測定データ解析")
-    if 'pl_calibrated' not in st.session_state or not st.session_state['pl_calibrated']:
-        st.info("まず、ステップ1の波長校正を完了させてください。")
-    else:
-        st.success(f"波長校正済みです。（校正係数: {st.session_state['pl_slope']:.4f} nm/pixel）")
-        with st.container(border=True):
-            center_wavelength_input = st.number_input(
-                "測定時の中心波長 (nm)", min_value=0, value=1700, step=10,
-                help="この測定で装置に設定した中心波長を入力してください。凡例の自動整形にも使われます。"
-            )
-            uploaded_files = st.file_uploader("測定データファイル（複数選択可）をアップロード", type=['txt'], accept_multiple_files=True)
-            if uploaded_files:
-                st.subheader("解析結果")
-                fig, ax = plt.subplots(figsize=(10, 6))
-                all_dfs, filenames = [], []
-                center_wl_str = str(int(center_wavelength_input))
-                legend_labels = []
-                for f in uploaded_files:
-                    base_name = os.path.splitext(f.name)[0]
-                    cleaned_label = base_name.replace(center_wl_str, "").strip(' _-')
-                    legend_labels.append(cleaned_label if cleaned_label else base_name)
-                for uploaded_file, label in zip(uploaded_files, legend_labels):
-                    df = load_pl_data(uploaded_file)
-                    if df is not None:
-                        slope = st.session_state['pl_slope']
-                        center_pixel = 256.5 
-                        df['wavelength_nm'] = (df['pixel'] - center_pixel) * slope + center_wavelength_input
-                        ax.plot(df['wavelength_nm'], df['intensity'], label=label, linewidth=2.5)
-                        all_dfs.append(df); filenames.append(uploaded_file.name)
-                if all_dfs:
-                    ax.set_title(f"PL spectrum (Center wavelength: {center_wavelength_input} nm)")
-                    ax.set_xlabel("wavelength [nm]"); ax.set_ylabel("PL intensity")
-                    ax.legend(loc='upper left', frameon=False, fontsize=14)
-                    ax.grid(axis='y', linestyle='-', color='lightgray', zorder=0)
-                    ax.tick_params(direction='in', top=True, right=True, which='both')
-                    combined_df = pd.concat(all_dfs)
-                    min_wl = combined_df['wavelength_nm'].min()
-                    max_wl = combined_df['wavelength_nm'].max()
-                    padding = (max_wl - min_wl) * 0.05
-                    ax.set_xlim(min_wl - padding, max_wl + padding)
-                    st.pyplot(fig)
-                    output = BytesIO()
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        for df, uploaded_file, label in zip(all_dfs, uploaded_files, legend_labels):
-                            sheet_name = label[:31]
-                            export_df = df[['wavelength_nm', 'intensity']].copy()
-                            export_df.rename(columns={'intensity': os.path.splitext(uploaded_file.name)[0]}, inplace=True)
-                            export_df.to_excel(writer, index=False, sheet_name=sheet_name)
-                    processed_data = output.getvalue()
+    st.write("---") 
+    st.subheader("ステップ2：測定データ解析") 
+    if 'pl_calibrated' not in st.session_state or not st.session_state['pl_calibrated']: 
+        st.info("まず、ステップ1の波長校正を完了させてください。") 
+    else: 
+        st.success(f"波長校正済みです。（校正係数: {st.session_state['pl_slope']:.4f} nm/pixel）") 
+        with st.container(border=True): 
+            center_wavelength_input = st.number_input( 
+                "測定時の中心波長 (nm)", min_value=0, value=1700, step=10, 
+                help="この測定で装置に設定した中心波長を入力してください。凡例の自動整形にも使われます。" 
+            ) 
+            uploaded_files = st.file_uploader("測定データファイル（複数選択可）をアップロード", type=['txt'], accept_multiple_files=True) 
+            if uploaded_files: 
+                st.subheader("解析結果") 
+                fig, ax = plt.subplots(figsize=(10, 6)) 
+                all_dfs, filenames = [], [] 
+                center_wl_str = str(int(center_wavelength_input)) 
+                legend_labels = [] 
+                for f in uploaded_files: 
+                    base_name = os.path.splitext(f.name)[0] 
+                    cleaned_label = base_name.replace(center_wl_str, "").strip(' _-') 
+                    legend_labels.append(cleaned_label if cleaned_label else base_name) 
+                for uploaded_file, label in zip(uploaded_files, legend_labels): 
+                    df = load_pl_data(uploaded_file) 
+                    if df is not None: 
+                        slope = st.session_state['pl_slope'] 
+                        center_pixel = 256.5  
+                        df['wavelength_nm'] = (df['pixel'] - center_pixel) * slope + center_wavelength_input 
+                        ax.plot(df['wavelength_nm'], df['intensity'], label=label, linewidth=2.5) 
+                        all_dfs.append(df); filenames.append(uploaded_file.name) 
+                if all_dfs: 
+                    ax.set_title(f"PL spectrum (Center wavelength: {center_wavelength_input} nm)") 
+                    ax.set_xlabel("wavelength [nm]"); ax.set_ylabel("PL intensity") 
+                    ax.legend(loc='upper left', frameon=False, fontsize=14) 
+                    ax.grid(axis='y', linestyle='-', color='lightgray', zorder=0) 
+                    ax.tick_params(direction='in', top=True, right=True, which='both') 
+                    combined_df = pd.concat(all_dfs) 
+                    min_wl = combined_df['wavelength_nm'].min() 
+                    max_wl = combined_df['wavelength_nm'].max() 
+                    padding = (max_wl - min_wl) * 0.05 
+                    ax.set_xlim(min_wl - padding, max_wl + padding) 
+                    st.pyplot(fig) 
+                    output = BytesIO() 
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer: 
+                        for df, uploaded_file, label in zip(all_dfs, uploaded_files, legend_labels): 
+                            sheet_name = label[:31] 
+                            export_df = df[['wavelength_nm', 'intensity']].copy() 
+                            export_df.rename(columns={'intensity': os.path.splitext(uploaded_file.name)[0]}, inplace=True) 
+                            export_df.to_excel(writer, index=False, sheet_name=sheet_name) 
+                    processed_data = output.getvalue() 
                     st.download_button(label="📈 Excelデータとしてダウンロード", data=processed_data, file_name=f"pl_analysis_{center_wavelength_input}nm.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # --- Main App Logic ---
 def main():
     st.title("🛠️ 山根研 便利屋さん")
     st.sidebar.header("メニュー")
+    # PLデータ解析ページを追加
     menu = ["ノート記録", "ノート一覧", "カレンダー", "議事録管理", "山根研知恵袋", "引き継ぎ情報", "お問い合わせフォーム", "PLデータ解析"]
     selected_page = st.sidebar.radio("機能を選択", menu)
 
@@ -526,12 +530,9 @@ def main():
         "山根研知恵袋": page_qa,
         "引き継ぎ情報": page_handover,
         "お問い合わせフォーム": page_inquiry,
-        "PLデータ解析": page_pl_analysis
+        "PLデータ解析": page_pl_analysis,
     }
     page_map[selected_page]()
 
 if __name__ == "__main__":
     main()
-
-
-
