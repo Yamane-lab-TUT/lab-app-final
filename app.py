@@ -1,10 +1,10 @@
 # --------------------------------------------------------------------------
-# Yamane Lab Convenience Tool - Streamlit Application (v10.1 - Final Release)
+# Yamane Lab Convenience Tool - Streamlit Application (v14.0 - Signed URL Final)
 #
-# v10.1:
-# - Supports file uploads to folders within a user's "My Drive" by
-#   ensuring the parent folder is shared with the service account.
-# - Retains the robust authentication logic and all features.
+# v14.0:
+# - Switches to using Signed URLs for GCS objects, bypassing the need for
+#   public buckets. This is a more secure and robust method.
+# - Requires the "Service Account Token Creator" IAM role.
 # --------------------------------------------------------------------------
 
 import streamlit as st
@@ -20,23 +20,17 @@ from urllib.parse import quote as url_quote, urlencode
 # Google API client libraries
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
-from googleapiclient.errors import HttpError
+from google.cloud import storage # Cloud Storageライブラリ
 
 # --- Global Configuration & Setup ---
 st.set_page_config(page_title="山根研 便利屋さん", layout="wide")
 
 # --- Google Cloud & App Settings ---
-# 以前のフォルダIDを使用します。
-# 事前にこれらのフォルダを含む親フォルダをサービスアカウントと「編集者」権限で共有してください。
-FOLDER_IDS = {
-    'EP_D1':    '1KQEeEsHChqtrAIvP91ILnf6oS4fTVi1p',
-    'EP_D2':    '1inmARuM_SgiYHi4PR7rcWRH0jERKZVJy',
-    'MT':       '1YllkIwYuV3IqY4_i0YoyY43SAB-U8-0i',
-    'MINUTES':  '1g7qiEFuEchsFFBKFJwxN2D2PjShuDtzM',
-    'HANDOVER': '1Mr70YjsgCzMboD7UZStm7bE8LQs1mwFu',
-    'QA':       '1cil7cMFmQlgfzqOD-8QOm4KqVB4Emy79'
-}
+# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+# ↓↓↓↓↓↓ 【重要】以前のステップで作成したご自身の「バケット名」に書き換えてください ↓↓↓↓↓↓
+CLOUD_STORAGE_BUCKET_NAME = "your-globally-unique-bucket-name"  # 例: "yamane-lab-app-files-2025"
+# ↑↑↑↑↑↑ 【重要】以前のステップで作成したご自身の「バケット名」に書き換えてください ↑↑↑↑↑↑
+# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
 
 SPREADSHEET_NAME = 'エピノート'
 DEFAULT_CALENDAR_ID = 'yamane.lab.6747@gmail.com'
@@ -46,7 +40,7 @@ INQUIRY_RECIPIENT_EMAIL = 'kyuno.yamato.ns@tut.ac.jp'
 @st.cache_resource(show_spinner="Googleサービスに接続中...")
 def initialize_google_services():
     try:
-        scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/calendar']
+        scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/calendar', 'https://www.googleapis.com/auth/devstorage.read_write']
         
         if "gcs_credentials" not in st.secrets:
             st.error("❌ 致命的なエラー: Streamlit CloudのSecretsに `gcs_credentials` が見つかりません。")
@@ -57,15 +51,16 @@ def initialize_google_services():
         creds_dict = json.loads(creds_string_cleaned)
         
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-        gc = gspread.service_account_from_dict(creds_dict)
-        drive_service = build('drive', 'v3', credentials=creds)
-        calendar_service = build('calendar', 'v3', credentials=creds)
-        
-        return gc, drive_service, calendar_service
-    except Exception as e:
-        st.error(f"❌ 致命的なエラー: サービスの初期化に失敗しました。Secretsの内容を確認してください。"); st.exception(e); st.stop()
 
-gc, drive_service, calendar_service = initialize_google_services()
+        gc = gspread.authorize(creds)
+        calendar_service = build('calendar', 'v3', credentials=creds)
+        storage_client = storage.Client(credentials=creds)
+        
+        return gc, calendar_service, storage_client
+    except Exception as e:
+        st.error(f"❌ 致命的なエラー: サービスの初期化に失敗しました。"); st.exception(e); st.stop()
+
+gc, calendar_service, storage_client = initialize_google_services()
 
 # --- Utility Functions ---
 @st.cache_data(ttl=300, show_spinner="シート「{sheet_name}」を読み込み中...")
@@ -80,33 +75,35 @@ def get_sheet_as_df(_gc, spreadsheet_name, sheet_name):
     except Exception:
         st.warning(f"シート「{sheet_name}」を読み込めません。空の可能性があります。"); return pd.DataFrame()
 
-def upload_file_to_drive(service, file_uploader_obj, folder_id, memo_content=""):
+# ★★★★★ Cloud Storageへアップロードし、「署名付きURL」を生成するよう修正 ★★★★★
+def upload_file_to_gcs(storage_client, bucket_name, file_uploader_obj, memo_content=""):
     if not file_uploader_obj: return "", ""
     try:
+        bucket = storage_client.bucket(bucket_name)
+        
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        file_extension = os.path.splitext(file_uploader_obj.name)[1]
+        sanitized_memo = re.sub(r'[\\/:*?"<>|\r\n]+', '', memo_content)[:50] if memo_content else "無題"
+        destination_blob_name = f"{timestamp}_{sanitized_memo}{file_extension}"
+        
+        blob = bucket.blob(destination_blob_name)
+        
         with st.spinner(f"'{file_uploader_obj.name}'をアップロード中..."):
-            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-            file_extension = os.path.splitext(file_uploader_obj.name)[1]
-            sanitized_memo = re.sub(r'[\\/:*?"<>|\r\n]+', '', memo_content)[:50] if memo_content else "無題"
-            new_filename = f"{sanitized_memo} ({timestamp}){file_extension}"
-            file_metadata = {'name': new_filename, 'parents': [folder_id]}
-            media = MediaIoBaseUpload(io.BytesIO(file_uploader_obj.getvalue()), mimetype=file_uploader_obj.type, resumable=True)
-            
-            # supportsAllDrives=True は共有ドライブ・マイドライブ両方で有効なため、残しておきます
-            file = service.files().create(
-                body=file_metadata,
-                media_body=media,
-                fields='id, webViewLink',
-                supportsAllDrives=True
-            ).execute()
+            blob.upload_from_file(file_uploader_obj, content_type=file_uploader_obj.type)
 
-        st.success(f"📄 ファイル '{new_filename}' をアップロードしました。"); return new_filename, file.get('webViewLink')
+        # 100年間有効な署名付きURLを生成
+        expiration_time = timedelta(days=365 * 100)
+        signed_url = blob.generate_signed_url(expiration=expiration_time)
+
+        st.success(f"📄 ファイル '{destination_blob_name}' をアップロードしました。")
+        return destination_blob_name, signed_url
     except Exception as e:
         st.error(f"ファイルアップロード中にエラー: {e}"); return "アップロード失敗", ""
 
 def generate_gmail_link(recipient, subject, body):
     return f"https://mail.google.com/mail/?view=cm&fs=1&to={url_quote(recipient)}&su={url_quote(subject)}&body={url_quote(body)}"
 
-# (これ以降のUI関連コードは変更ありません)
+# --- UI Page Functions (これ以降は変更ありません) ---
 def page_note_recording():
     st.header("📝 エピノート・メンテノートの記録")
     note_type = st.radio("どちらを登録しますか？", ("エピノート", "メンテノート"), horizontal=True)
@@ -118,8 +115,7 @@ def page_note_recording():
             submitted = st.form_submit_button("エピノートを保存")
             if submitted:
                 if uploaded_file:
-                    folder_id = FOLDER_IDS['EP_D1'] if ep_category == "D1" else FOLDER_IDS['EP_D2']
-                    filename, url = upload_file_to_drive(drive_service, uploaded_file, folder_id, ep_memo)
+                    filename, url = upload_file_to_gcs(storage_client, CLOUD_STORAGE_BUCKET_NAME, uploaded_file, ep_memo)
                     if url:
                         row_data = [datetime.now().strftime("%Y%m%d_%H%M%S"), "エピノート", ep_category, ep_memo, filename, url]
                         gc.open(SPREADSHEET_NAME).worksheet('エピノート_データ').append_row(row_data)
@@ -133,7 +129,7 @@ def page_note_recording():
             if submitted:
                 if not mt_memo: st.error("メモ内容を入力してください。")
                 else:
-                    filename, url = upload_file_to_drive(drive_service, uploaded_file, FOLDER_IDS['MT'], mt_memo)
+                    filename, url = upload_file_to_gcs(storage_client, CLOUD_STORAGE_BUCKET_NAME, uploaded_file, mt_memo)
                     row_data = [datetime.now().strftime("%Y%m%d_%H%M%S"), "メンテノート", mt_memo, filename, url]
                     gc.open(SPREADSHEET_NAME).worksheet('メンテノート_データ').append_row(row_data)
                     st.success("メンテノートを保存しました！"); st.cache_data.clear(); st.rerun()
@@ -190,7 +186,6 @@ def page_note_list():
             if '写真URL' in row and row['写真URL']:
                 st.markdown(f"**写真:** [ファイルを開く]({row['写真URL']})", unsafe_allow_html=True)
 
-
 def page_calendar():
     st.header("📅 Googleカレンダーの管理")
     tab1, tab2 = st.tabs(["予定の確認", "新しい予定の追加"])
@@ -242,7 +237,7 @@ def page_calendar():
                         created_event = calendar_service.events().insert(calendarId=DEFAULT_CALENDAR_ID, body=event_body).execute()
                         st.success(f"予定「{created_event.get('summary')}」を追加しました。"); st.markdown(f"[カレンダーで確認]({created_event.get('htmlLink')})")
                     except HttpError as e: st.error(f"予定の追加に失敗しました: {e}")
-                    
+
 def page_minutes():
     st.header("🎙️ 会議の議事録の管理"); minutes_sheet_name = '議事録_データ'
     tab1, tab2 = st.tabs(["議事録の確認", "新しい議事録の登録"])
@@ -264,7 +259,7 @@ def page_minutes():
             if submitted:
                 if not title: st.error("タイトルは必須です。")
                 else:
-                    filename, url = upload_file_to_drive(drive_service, audio_file, FOLDER_IDS['MINUTES'], title)
+                    filename, url = upload_file_to_gcs(storage_client, CLOUD_STORAGE_BUCKET_NAME, audio_file, title)
                     row_data = [datetime.now().strftime("%Y%m%d_%H%M%S"), title, filename, url, content]
                     gc.open(SPREADSHEET_NAME).worksheet(minutes_sheet_name).append_row(row_data)
                     st.success("議事録を保存しました。"); st.cache_data.clear(); st.rerun()
@@ -302,7 +297,6 @@ def page_qa():
                     if question['ステータス'] == '未解決' and st.button("解決済みにする", key=f"resolve_{question_id}"):
                         sheet = gc.open(SPREADSHEET_NAME).worksheet(qa_sheet_name)
                         cell = sheet.find(question_id)
-                        # Assuming 'ステータス' is the 7th column (index 6)
                         sheet.update_cell(cell.row, 7, "解決済み")
                         st.success("ステータスを更新しました。"); st.cache_data.clear(); st.rerun()
                 
@@ -332,8 +326,8 @@ def page_qa():
         q_file = st.file_uploader("参考ファイル"); q_email = st.text_input("連絡先メールアドレス（任意）")
         if st.form_submit_button("質問を投稿"):
             if q_title and q_content:
-                fname, furl = upload_file_to_drive(drive_service, q_file, FOLDER_IDS['QA'], q_title)
-                row_data = [datetime.now().strftime("%Y%m%d_%H%M%S"), q_title, q_content, q_email, fname, furl, "未解決"]
+                filename, url = upload_file_to_gcs(storage_client, CLOUD_STORAGE_BUCKET_NAME, q_file, q_title)
+                row_data = [datetime.now().strftime("%Y%m%d_%H%M%S"), q_title, q_content, q_email, filename, url, "未解決"]
                 gc.open(SPREADSHEET_NAME).worksheet(qa_sheet_name).append_row(row_data)
                 st.success("質問を投稿しました。"); st.cache_data.clear(); st.rerun()
             else: st.error("タイトルと内容は必須です。")
