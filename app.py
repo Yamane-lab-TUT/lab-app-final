@@ -60,11 +60,7 @@ INQUIRY_RECIPIENT_EMAIL = 'kyuno.yamato.ns@tut.ac.jp'
 @st.cache_resource(show_spinner="Googleサービスに接続中...")
 def initialize_google_services():
     try:
-        scopes = [
-            'https://www.googleapis.com/auth/spreadsheets',
-            'https://www.googleapis.com/auth/drive',
-            'https://www.googleapis.com/auth/calendar'
-        ]
+        scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/calendar']
         
         if "gcs_credentials" not in st.secrets:
             st.error(f"❌ 致命的なエラー: Streamlit CloudのSecretsに認証情報が見つかりません。\n[gcs_credentials]というキーで認証情報を設定してください。")
@@ -84,7 +80,6 @@ def initialize_google_services():
 gc, drive_service, calendar_service = initialize_google_services()
 
 # --- Utility Functions ---
-
 @st.cache_data(ttl=300, show_spinner="シート「{sheet_name}」を読み込み中...")
 def get_sheet_as_df(_gc, spreadsheet_name, sheet_name):
     try:
