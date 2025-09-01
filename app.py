@@ -1,10 +1,10 @@
 # --------------------------------------------------------------------------
-# Yamane Lab Convenience Tool - Streamlit Application (v7.1 - Final Version)
+# Yamane Lab Convenience Tool - Streamlit Application (v7.3 - Final Version)
 #
-# v7.1:
-# - Fixes ModuleNotFoundError for MimeText.
+# v7.3:
+# - Fixes a ModuleNotFoundError.
 # - Addresses the Google Drive storage quota error by using Shared Drives.
-# - Re-implements the code in a way that minimizes the potential for SyntaxErrors.
+# - Implements a robust authentication logic that works for both local and cloud environments.
 # - Integrates all requested features into a robust, single-file structure.
 # --------------------------------------------------------------------------
 
@@ -45,7 +45,6 @@ plt.rcParams['font.size'] = 14
 plt.rcParams['axes.unicode_minus'] = False
 
 # Google Cloud related settings
-# IMPORTANT: Use your actual credentials and folder IDs here.
 SERVICE_ACCOUNT_FILE = 'research-lab-app-42f3c0b5d5b1.json'
 SPREADSHEET_NAME = 'エピノート'
 FOLDER_IDS = {
@@ -68,9 +67,19 @@ def initialize_google_services():
             'https://www.googleapis.com/auth/drive',
             'https://www.googleapis.com/auth/calendar'
         ]
-        
-        creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=scopes)
-        gc = gspread.service_account(filename=SERVICE_ACCOUNT_FILE)
+
+        if "gcs_credentials" in st.secrets:
+            # Streamlit Cloud環境での認証
+            creds_info = st.secrets["gcs_credentials"]
+            creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
+            gc = gspread.service_account_from_dict(creds_info)
+        else:
+            # ローカル環境での認証
+            if not os.path.exists(SERVICE_ACCOUNT_FILE):
+                st.error(f"❌ 致命的なエラー: サービスアカウントのJSONキーファイルが見つかりません。\nファイル名 '{SERVICE_ACCOUNT_FILE}' を確認し、app.pyと同じフォルダに置いてください。")
+                st.stop()
+            creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=scopes)
+            gc = gspread.service_account(filename=SERVICE_ACCOUNT_FILE)
 
         drive_service = build('drive', 'v3', credentials=creds)
         calendar_service = build('calendar', 'v3', credentials=creds)
@@ -228,7 +237,22 @@ def page_calendar():
         end_date = col2.date_input("終了日", datetime.today().date() + timedelta(days=7))
         if st.button("予定を読み込む"):
             if start_date > end_date: st.error("終了日は開始日以降に設定してください。")
-            else: display_calendar_events(calendar_service, DEFAULT_CALENDAR_ID, start_date, end_date)
+            else:
+                try:
+                    timeMin = datetime.combine(start_date, time.min).isoformat() + 'Z'
+                    timeMax = datetime.combine(end_date, time.max).isoformat() + 'Z'
+                    events_result = calendar_service.events().list(calendarId=DEFAULT_CALENDAR_ID, timeMin=timeMin, timeMax=timeMax, singleEvents=True, orderBy='startTime').execute()
+                    events = events_result.get('items', [])
+                    if not events: st.info("指定された期間に予定はありません。")
+                    else:
+                        event_data = []
+                        for event in events:
+                            start = event['start'].get('dateTime', event['start'].get('date'))
+                            if 'T' in start: dt = datetime.fromisoformat(start); date_str, time_str = dt.strftime("%Y/%m/%d (%a)"), dt.strftime("%H:%M")
+                            else: date_str, time_str = datetime.strptime(start, "%Y-%m-%d").strftime("%Y/%m/%d (%a)"), "終日"
+                            event_data.append({"日付": date_str, "時刻": time_str, "件名": event['summary'], "場所": event.get('location', '')})
+                        st.dataframe(pd.DataFrame(event_data), use_container_width=True)
+                except HttpError as e: st.error(f"カレンダーの読み込みに失敗しました: {e}")
     with tab2:
         st.subheader("新しい予定を追加")
         with st.form("add_event_form", clear_on_submit=True):
@@ -300,25 +324,10 @@ def page_qa():
     qa_sheet_name = '知恵袋_データ'
     answers_sheet_name = '知恵袋_解答'
     
-    st.subheader("新しい質問を投稿")
-    with st.form("new_question_form", clear_on_submit=True):
-        question_title = st.text_input("質問タイトル *")
-        question_content = st.text_area("質問内容 *", height=150)
-        uploaded_qa_file = st.file_uploader("参考ファイル（画像など）", type=["jpg", "jpeg", "png", "pdf"])
-        questioner_email = st.text_input("連絡先メールアドレス（任意）")
-        submitted = st.form_submit_button("質問を投稿")
-        if submitted:
-            if not question_title or not question_content: st.error("タイトルと内容は必須です。")
-            else:
-                filename, url = upload_file_to_drive(drive_service, uploaded_qa_file, FOLDER_IDS['QA'], question_title)
-                row_data = [datetime.now().strftime("%Y%m%d_%H%M%S"), question_title, question_content, questioner_email, filename, url, "未解決"]
-                spreadsheet = gc.open(SPREADSHEET_NAME)
-                spreadsheet.worksheet(qa_sheet_name).append_row(row_data)
-                st.success("質問を投稿しました。「質問と回答を見る」タブで確認してください。"); st.cache_data.clear(); st.experimental_rerun()
+    # NEW: Simple filtering via selectbox instead of tabs
+    qa_status_filter = st.selectbox("表示する質問のステータス", ["すべての質問", "未解決のみ", "解決済みのみ"])
 
-    st.markdown("---")
     st.subheader("質問と回答を見る")
-
     df_qa = get_sheet_as_df(gc, SPREADSHEET_NAME, qa_sheet_name)
     df_answers = get_sheet_as_df(gc, SPREADSHEET_NAME, answers_sheet_name)
 
@@ -329,7 +338,17 @@ def page_qa():
     df_qa['タイムスタンプ_dt'] = pd.to_datetime(df_qa['タイムスタンプ'], format="%Y%m%d_%H%M%S")
     df_qa = df_qa.sort_values(by='タイムスタンプ_dt', ascending=False)
     
-    options = {f"[{row['ステータス']}] {row['質問タイトル']} ({row['タイムスタンプ_dt'].strftime('%Y/%m/%d %H:%M:%S')})": row['タイムスタンプ'] for _, row in df_qa.iterrows()}
+    filtered_df_qa = df_qa.copy()
+    if qa_status_filter == "未解決のみ":
+        filtered_df_qa = filtered_df_qa[filtered_df_qa['ステータス'] == '未解決']
+    elif qa_status_filter == "解決済みのみ":
+        filtered_df_qa = filtered_df_qa[filtered_df_qa['ステータス'] == '解決済み']
+        
+    if filtered_df_qa.empty:
+        st.info("条件に一致する質問はありません。")
+        return
+        
+    options = {f"[{row['ステータス']}] {row['質問タイトル']} ({row['タイムスタンプ_dt'].strftime('%Y/%m/%d %H:%M:%S')})": row['タイムスタンプ'] for _, row in filtered_df_qa.iterrows()}
     selected_ts = st.selectbox("質問を選択", ["---"] + list(options.keys()))
     
     if selected_ts != "---":
@@ -341,7 +360,7 @@ def page_qa():
             st.markdown(question['質問内容'])
             if question['添付ファイルURL']:
                 st.markdown(f"**添付ファイル:** [リンクを開く]({question['添付ファイルURL']})", unsafe_allow_html=True)
-            if question['ステータus'] == '未解決':
+            if question['ステータス'] == '未解決':
                 if st.button("この質問を解決済みにする", key=f"resolve_{question_id}"):
                     try:
                         spreadsheet = gc.open(SPREADSHEET_NAME)
@@ -376,6 +395,25 @@ def page_qa():
                         spreadsheet = gc.open(SPREADSHEET_NAME)
                         spreadsheet.worksheet(answers_sheet_name).append_row(row_data)
                         st.success("回答を投稿しました！"); st.cache_data.clear(); st.experimental_rerun()
+
+    st.markdown("---")
+    st.subheader("新しい質問を投稿する")
+    with st.form("new_question_form", clear_on_submit=True):
+        q_title = st.text_input("質問タイトル *")
+        q_content = st.text_area("質問内容 *", height=150)
+        uploaded_qa_file = st.file_uploader("参考ファイル（画像など）", type=["jpg", "jpeg", "png", "pdf"])
+        questioner_email = st.text_input("連絡先メールアドレス（任意）")
+        submitted = st.form_submit_button("質問を投稿")
+        if submitted:
+            if not q_title or not q_content: st.error("タイトルと内容は必須です。")
+            else:
+                filename, url = upload_file_to_drive(drive_service, uploaded_qa_file, FOLDER_IDS['QA'], q_title)
+                row_data = [datetime.now().strftime("%Y%m%d_%H%M%S"), q_title, q_content, q_email, filename, url, "未解決"]
+                spreadsheet = gc.open(SPREADSHEET_NAME)
+                spreadsheet.worksheet(qa_sheet_name).append_row(row_data)
+                st.success("質問を投稿しました。「質問と回答を見る」タブで確認してください。"); st.cache_data.clear(); st.experimental_rerun()
+
+
 def page_handover():
     st.header("🔑 引き継ぎ情報の管理")
     handover_sheet_name = '引き継ぎ_データ'
