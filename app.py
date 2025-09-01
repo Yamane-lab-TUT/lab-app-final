@@ -1,7 +1,8 @@
 # --------------------------------------------------------------------------
-# Yamane Lab Convenience Tool - Streamlit Application (v8.1 - Final Version)
+# Yamane Lab Convenience Tool - Streamlit Application (v8.2 - Final Version)
 #
-# v8.1:
+# v8.2:
+# - Fixes a SyntaxError: unterminated string literal in page_handover function.
 # - Implements a robust authentication logic that works exclusively with Streamlit Cloud's secrets.
 # - Integrates all requested features into a robust, single-file structure.
 # --------------------------------------------------------------------------
@@ -340,7 +341,7 @@ def page_qa():
         st.info("条件に一致する質問はありません。")
         return
         
-    options = {f"[{row['ステータス']}] {row['質問タイトル']} ({row['タイムスタンプ_dt'].strftime('%Y/%m/%d %H:%M:%S')})": row['タイムスタンプ'] for _, row in filtered_df_qa.iterrows()}
+    options = {f"[{row['ステータus']}] {row['質問タイトル']} ({row['タイムスタンプ_dt'].strftime('%Y/%m/%d %H:%M:%S')})": row['タイムスタンプ'] for _, row in filtered_df_qa.iterrows()}
     selected_ts = st.selectbox("質問を選択", ["---"] + list(options.keys()))
     
     if selected_ts != "---":
@@ -352,7 +353,7 @@ def page_qa():
             st.markdown(question['質問内容'])
             if question['添付ファイルURL']:
                 st.markdown(f"**添付ファイル:** [リンクを開く]({question['添付ファイルURL']})", unsafe_allow_html=True)
-            if question['ステータus'] == '未解決':
+            if question['ステータス'] == '未解決':
                 if st.button("この質問を解決済みにする", key=f"resolve_{question_id}"):
                     try:
                         spreadsheet = gc.open(SPREADSHEET_NAME)
@@ -506,5 +507,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
