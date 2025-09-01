@@ -132,6 +132,24 @@ def load_pl_data(uploaded_file):
     except Exception as e:
         st.error(f"ファイル「{uploaded_file.name}」の読み込みに失敗しました。エラー: {e}"); return None
 
+# 認証情報の読み込み（既にお持ちのものを利用）
+service_info = json.loads(st.secrets["gcs"]["gcs_credentials"])
+credentials = service_account.Credentials.from_service_account_info(service_info)
+
+# Drive APIクライアントを作成
+drive = build("drive", "v3", credentials=credentials)
+
+# 直近のファイル一覧を取得
+results = drive.files().list(pageSize=5, fields="files(id, name, mimeType)").execute()
+files = results.get("files", [])
+
+if not files:
+    st.write("⚠️ ファイルが取得できませんでした")
+else:
+    st.write("✅ サービスアカウントで見えるファイル:")
+    for f in files:
+        st.write(f"{f['name']} ({f['id']}, {f['mimeType']})")
+
 # --- 4. UIページ関数 ---
 
 def page_note_recording(drive_service, gc):
@@ -546,3 +564,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
