@@ -29,7 +29,7 @@ except Exception as e:
     st.error(f"❌ ファイル一覧取得エラー: {e}")
 
 # --- 2. テストアップロード ---
-TEST_FOLDER_ID = "ここに保存先フォルダのIDを入れてください"  # 例: "1a2B3cD4EfGhIjK..."
+TEST_FOLDER_ID = "1YllkIwYuV3IqY4_i0YoyY43SAB-U8-0i"  # 例: "1a2B3cD4EfGhIjK..."
 TEST_FILENAME = "test_upload.txt"
 
 try:
@@ -51,3 +51,4 @@ try:
     st.success(f"✅ アップロード成功: {uploaded['webViewLink']}")
 except Exception as e:
     st.error(f"❌ アップロードエラー: {e}")
+
