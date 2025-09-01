@@ -115,9 +115,17 @@ def load_pl_data(uploaded_file):
     データは2列（pixel, intensity）の形式を想定しています。
     """
     try:
-        # この部分はユーザーのデータ形式に合わせて修正してください。
-        # 例：カンマ区切り、タブ区切り、スペース区切りなど
+        # sep="\t" は、データがタブ区切りである場合に適用されます。
+        # ファイル形式に合わせて変更してください。
         df = pd.read_csv(uploaded_file, sep="\t", header=None, names=['pixel', 'intensity'])
+
+        # データが確実に数値であることを確認するために、型を変換します。
+        df['pixel'] = pd.to_numeric(df['pixel'], errors='coerce')
+        df['intensity'] = pd.to_numeric(df['intensity'], errors='coerce')
+
+        # 非数値の行を削除します (NaNを含む行)
+        df.dropna(inplace=True)
+
         return df
     except Exception as e:
         st.error(f"データの読み込みに失敗しました。ファイル形式を確認してください。エラー: {e}")
@@ -524,5 +532,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
