@@ -445,44 +445,45 @@ def page_inquiry():
                 st.cache_data.clear()
             else: st.error("詳細内容を入力してください。")
 
-def page_pl_analysis(): 
-    st.header("🔬 PLデータ解析") 
-    with st.expander("ステップ1：波長校正", expanded=True): 
-        st.write("2つの基準波長の反射光データをアップロードして、分光器の傾き（nm/pixel）を校正します。") 
-        col1, col2 = st.columns(2) 
-        with col1: 
-            cal1_wavelength = st.number_input("基準波長1 (nm)", value=1500) 
-            cal1_file = st.file_uploader(f"{cal1_wavelength}nm の校正ファイル (.txt)", type=['txt'], key="cal1") 
-        with col2: 
-            cal2_wavelength = st.number_input("基準波長2 (nm)", value=1570) 
-            cal2_file = st.file_uploader(f"{cal2_wavelength}nm の校正ファイル (.txt)", type=['txt'], key="cal2") 
-        if st.button("校正を実行", key="run_calibration"): 
-            if cal1_file and cal2_file: 
-                df1 = load_pl_data(cal1_file) 
-                df2 = load_pl_data(cal2_file) 
-                if df1 is not None and df2 is not None: 
-                    # ピーク位置を求める
-                    peak_pixel1 = df1['pixel'].iloc[df1['intensity'].idxmax()]
-                    peak_pixel2 = df2['pixel'].iloc[df2['intensity'].idxmax()]
-                    st.write("---"); st.subheader("校正結果") 
-                    col_res1, col_res2, col_res3 = st.columns(3) 
-                    col_res1.metric(f"{cal1_wavelength}nmのピーク位置", f"{int(peak_pixel1)} pixel") 
-                    col_res2.metric(f"{cal2_wavelength}nmのピーク位置", f"{int(peak_pixel2)} pixel") 
-                    try: 
-                        delta_wave = float(cal2_wavelength - cal1_wavelength) 
-                        delta_pixel = float(peak_pixel1 - peak_pixel2) 
-                        if delta_pixel == 0: 
-                            st.error("2つのピーク位置が同じです。異なる校正ファイルを選択するか、データを確認してください。") 
-                        else: 
-                            slope = delta_wave / delta_pixel 
-                            col_res3.metric("校正係数 (nm/pixel)", f"{slope:.4f}") 
-                            st.session_state['pl_calibrated'] = True 
-                            st.session_state['pl_slope'] = slope 
-                            st.success("校正係数を保存しました。ステップ2に進んでください。") 
-                    except Exception as e: 
-                        st.error(f"校正パラメータの計算中にエラーが発生しました: {e}") 
-            else: 
-                st.warning("両方の校正ファイルをアップロードしてください。") 
+def load_pl_data(uploaded_file):
+    """
+    アップロードされたtxtファイルを読み込み、Pandas DataFrameを返す関数。
+    データは2列（pixel, intensity）の形式を想定しています。
+    様々なファイル形式に対応するため、複数の読み込み方法を試します。
+    """
+    try:
+        # ファイルの内容を一度に読み込み、行ごとに分割
+        content = uploaded_file.getvalue().decode('utf-8').splitlines()
+        
+        # 連続した数値データが始まる行を特定
+        data_start_line = 0
+        for i, line in enumerate(content):
+            # 最初に見つかった数値データ行をデータの開始とみなす
+            # 'isdigit()' や 'isnumeric()' を使うことで、純粋な数値データかどうかを判別します
+            if any(char.isdigit() for char in line):
+                data_start_line = i
+                break
+        
+        # StringIOを使って、データ部分だけを読み込む
+        data_string_io = io.StringIO("\n".join(content[data_start_line:]))
+        
+        # カンマ区切りで読み込み
+        df = pd.read_csv(data_string_io, sep=',', header=None, names=['pixel', 'intensity'])
+
+        # データが確実に数値であることを確認し、NaNを削除
+        df['pixel'] = pd.to_numeric(df['pixel'], errors='coerce')
+        df['intensity'] = pd.to_numeric(df['intensity'], errors='coerce')
+        df.dropna(inplace=True)
+
+        if df.empty:
+            st.warning(f"警告：'{uploaded_file.name}'に有効なデータが含まれていません。ファイルの内容を確認してください。")
+            return None
+        
+        return df
+
+    except Exception as e:
+        st.error(f"エラー：'{uploaded_file.name}'の読み込みに失敗しました。ファイル形式を確認してください。({e})")
+        return None
 
     st.write("---") 
     st.subheader("ステップ2：測定データ解析") 
@@ -557,4 +558,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
