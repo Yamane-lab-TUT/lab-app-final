@@ -1,7 +1,7 @@
 # --------------------------------------------------------------------------
-# Yamane Lab Convenience Tool - Streamlit Application (v8.2 - Final Version)
+# Yamane Lab Convenience Tool - Streamlit Application (v8.3 - Final Version)
 #
-# v8.2:
+# v8.3:
 # - Fixes a SyntaxError: unterminated string literal in page_handover function.
 # - Implements a robust authentication logic that works exclusively with Streamlit Cloud's secrets.
 # - Integrates all requested features into a robust, single-file structure.
