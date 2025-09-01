@@ -437,7 +437,7 @@ def page_handover():
                 if selected_row['内容1']: st.markdown(f"**ファイル/URL:** [リンクを開く]({selected_row['内容1']})")
                 st.write("**メモ:**"); st.text(selected_row['メモ'])
             elif selected_row['種類'] == "連絡先": st.write(f"**電話番号:** {selected_row['内容1']}"); st.write(f"**メール:** {selected_row['内容2']}"); st.write("**メモ:**"); st.text(selected_row['メモ'])
-            elif selected_row['種類'] == "パスワード": st.write(f"**サービス名/場所:** {selected_row['タイトル']}"); st.write(f"**ユーザー名:** {selected_row['内容1']}"); st.write(f"**パスワード:** {selected_row['内容2']}"); st.write("**メモ:**"); st.text{selected_row['メモ']}")
+            elif selected_row['種類'] == "パスワード": st.write(f"**サービス名/場所:** {selected_row['タイトル']}"); st.write(f"**ユーザー名:** {selected_row['内容1']}"); st.write(f"**パスワード:** {selected_row['内容2']}"); st.write("**メモ:**"); st.text(selected_row['メモ']")
             else: st.write(f"**内容:**"); st.markdown(selected_row['内容1']); st.write("**メモ:**"); st.text(selected_row['メモ'])
     with tab2:
         st.subheader("新しい引き継ぎ情報を登録")
@@ -506,4 +506,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
