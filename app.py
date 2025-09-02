@@ -1,10 +1,8 @@
 # --------------------------------------------------------------------------
 # Yamane Lab Convenience Tool - Streamlit Application
 #
-# v15.0:
-# - All features consolidated into a single, functional script.
-# - Includes robust PL data analysis with header-skipping logic.
-# - All UI page functions are defined before main() to prevent NameError.
+# v16.0:
+# - Fixes PL data export to a single Excel sheet with wavelength as the first column.
 # --------------------------------------------------------------------------
 
 import streamlit as st
@@ -115,23 +113,18 @@ def load_pl_data(uploaded_file):
     データは2列（pixel, intensity）の形式を想定し、ヘッダーを自動でスキップします。
     """
     try:
-        # ファイルの内容を一度に読み込み、行ごとに分割
         content = uploaded_file.getvalue().decode('utf-8').splitlines()
         
-        # 連続した数値データが始まる行を特定
         data_start_line = 0
         for i, line in enumerate(content):
             if any(char.isdigit() for char in line):
                 data_start_line = i
                 break
         
-        # StringIOを使って、データ部分だけを読み込む
         data_string_io = io.StringIO("\n".join(content[data_start_line:]))
         
-        # カンマ区切りで読み込み
         df = pd.read_csv(data_string_io, sep=',', header=None, names=['pixel', 'intensity'])
 
-        # データが確実に数値であることを確認し、NaNを削除
         df['pixel'] = pd.to_numeric(df['pixel'], errors='coerce')
         df['intensity'] = pd.to_numeric(df['intensity'], errors='coerce')
         df.dropna(inplace=True)
@@ -486,42 +479,58 @@ def page_pl_analysis():
             if uploaded_files:
                 st.subheader("解析結果")
                 fig, ax = plt.subplots(figsize=(10, 6))
-                all_dfs, filenames = [], []
-                center_wl_str = str(int(center_wavelength_input))
-                legend_labels = []
-                for f in uploaded_files:
-                    base_name = os.path.splitext(f.name)[0]
-                    cleaned_label = base_name.replace(center_wl_str, "").strip(' _-')
-                    legend_labels.append(cleaned_label if cleaned_label else base_name)
-                for uploaded_file, label in zip(uploaded_files, legend_labels):
+                
+                # DataFrameを格納するリストと結合用のベースDataFrameを準備
+                all_dataframes = []
+                
+                for uploaded_file in uploaded_files:
                     df = load_pl_data(uploaded_file)
                     if df is not None:
                         slope = st.session_state['pl_slope']
                         center_pixel = 256.5
                         df['wavelength_nm'] = (df['pixel'] - center_pixel) * slope + center_wavelength_input
+                        
+                        # 凡例ラベルを生成
+                        base_name = os.path.splitext(uploaded_file.name)[0]
+                        cleaned_label = base_name.replace(str(int(center_wavelength_input)), "").strip(' _-')
+                        label = cleaned_label if cleaned_label else base_name
+                        
                         ax.plot(df['wavelength_nm'], df['intensity'], label=label, linewidth=2.5)
-                        all_dfs.append(df); filenames.append(uploaded_file.name)
-                if all_dfs:
+                        
+                        # 結合用のデータフレームを準備
+                        export_df = df[['wavelength_nm', 'intensity']].copy()
+                        export_df.rename(columns={'intensity': base_name}, inplace=True)
+                        all_dataframes.append(export_df)
+
+                if all_dataframes:
+                    # すべてのデータフレームを 'wavelength_nm' をキーに結合
+                    final_df = all_dataframes[0]
+                    for i in range(1, len(all_dataframes)):
+                        final_df = pd.merge(final_df, all_dataframes[i], on='wavelength_nm', how='outer')
+                    
+                    final_df = final_df.sort_values(by='wavelength_nm').reset_index(drop=True)
+
                     ax.set_title(f"PL spectrum (Center wavelength: {center_wavelength_input} nm)")
                     ax.set_xlabel("wavelength [nm]"); ax.set_ylabel("PL intensity")
-                    ax.legend(loc='upper left', frameon=False, fontsize=10)
+                    ax.legend(loc='upper left', frameon=False, fontsize=14)
                     ax.grid(axis='y', linestyle='-', color='lightgray', zorder=0)
                     ax.tick_params(direction='in', top=True, right=True, which='both')
-                    combined_df = pd.concat(all_dfs)
-                    min_wl = combined_df['wavelength_nm'].min()
-                    max_wl = combined_df['wavelength_nm'].max()
+                    
+                    min_wl = final_df['wavelength_nm'].min()
+                    max_wl = final_df['wavelength_nm'].max()
                     padding = (max_wl - min_wl) * 0.05
                     ax.set_xlim(min_wl - padding, max_wl + padding)
                     st.pyplot(fig)
+                    
+                    # 結合されたデータフレームをExcelに書き出す
                     output = BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        for df, uploaded_file, label in zip(all_dfs, uploaded_files, legend_labels):
-                            sheet_name = label[:31]
-                            export_df = df[['wavelength_nm', 'intensity']].copy()
-                            export_df.rename(columns={'intensity': os.path.splitext(uploaded_file.name)[0]}, inplace=True)
-                            export_df.to_excel(writer, index=False, sheet_name=sheet_name)
+                        final_df.to_excel(writer, index=False, sheet_name='Combined PL Data')
+
                     processed_data = output.getvalue()
-                    st.download_button(label="📈 Excelデータとしてダウンロード", data=processed_data, file_name=f"pl_analysis_{center_wavelength_input}nm.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                    st.download_button(label="📈 Excelデータとしてダウンロード", data=processed_data, file_name=f"pl_analysis_combined_{center_wavelength_input}nm.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                else:
+                    st.warning("有効なデータファイルが見つかりませんでした。")
 
 # --- Main App Logic ---
 def main():
@@ -544,4 +553,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
