@@ -512,7 +512,7 @@ def page_pl_analysis():
 
                     ax.set_title(f"PL spectrum (Center wavelength: {center_wavelength_input} nm)")
                     ax.set_xlabel("wavelength [nm]"); ax.set_ylabel("PL intensity")
-                    ax.legend(loc='upper left', frameon=False, fontsize=14)
+                    ax.legend(loc='upper left', frameon=False, fontsize=10)
                     ax.grid(axis='y', linestyle='-', color='lightgray', zorder=0)
                     ax.tick_params(direction='in', top=True, right=True, which='both')
                     
@@ -553,3 +553,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
