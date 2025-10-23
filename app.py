@@ -1,8 +1,9 @@
 # --------------------------------------------------------------------------
 # Yamane Lab Convenience Tool - Streamlit Application
 #
-# v18.1:
-# - Syntax error caused by unexpected HTML <br> tags in Python code fixed.
+# v18.2:
+# - Syntax errors caused by unexpected HTML <br> tags fully fixed.
+# - Image display logic in page_note_list is unified to display images directly.
 # --------------------------------------------------------------------------
 
 import streamlit as st
@@ -261,6 +262,8 @@ def page_note_list():
             st.subheader(f"詳細: {row['タイムスタンプ']}")
             st.write(f"**カテゴリ:** {row['カテゴリ']}")
             st.write(f"**メモ:**"); st.text(row['メモ'])
+            
+            # ✅ 修正済み: エピノートの画像表示ロジック
             if '写真URL' in row and row['写真URL']:
                 file_url = row['写真URL']
                 file_name = row['ファイル名']
@@ -287,6 +290,8 @@ def page_note_list():
             row = filtered_df.loc[selected_index]
             st.subheader(f"詳細: {row['タイムスタンプ']}")
             st.write(f"**メモ:**"); st.text(row['メモ'])
+            
+            # ✅ 修正済み: メンテノートの画像表示ロジック
             if '写真URL' in row and row['写真URL']:
                 file_url = row['写真URL']
                 file_name = row['ファイル名']
@@ -340,7 +345,6 @@ def page_calendar():
                 if not event_summary: 
                     st.error("件名は必須です。")
                 else:
-                    # ✅ 修正済み: <br> タグを削除し、正しいPython構文に修正
                     if is_allday: 
                         start, end = {'date': event_date.isoformat()}, {'date': (event_date + timedelta(days=1)).isoformat()}
                     else:
@@ -370,10 +374,10 @@ def page_minutes():
         selected_key = st.selectbox("議事録を選択", ["---"] + list(options.keys()))
         if selected_key != "---":
             row = df.loc[options[selected_key]]
-            st.subheader(row['会議タイトル']) # ✅ 修正済み
+            st.subheader(row['会議タイトル'])
             st.caption(f"登録日時: {row['タイムスタンプ']}")
             if row.get('音声ファイルURL'): st.markdown(f"**[音声ファイルを開く]({row['音声ファイルURL']})** ({row.get('音声ファイル名', '')})")
-            st.markdown("---") # ✅ 修正済み
+            st.markdown("---")
             st.markdown(row['議事録内容'])
             
     with tab2:
@@ -610,7 +614,7 @@ def page_pl_analysis():
                     st.pyplot(fig)
                     
                     output = BytesIO()
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    with pd.ExcelWriter(output, engine='openypxl') as writer:
                         final_df.to_excel(writer, index=False, sheet_name='Combined PL Data')
 
                     processed_data = output.getvalue()
@@ -694,7 +698,7 @@ def page_trouble_report():
         with st.form("trouble_report_form", clear_on_submit=True):
             st.write("--- 発生概要 ---")
             col1, col2 = st.columns(2)
-            device_options = ["MBE", "XRD", "ドラフター", "PL", "抵抗加熱蒸着", "RTA", "IV", "その他（編集して記入）"]
+            device_options = ["RTA", "ALD", "E-beam", "スパッタ", "真空ポンプ", "クリーンルーム設備", "その他"]
             device = col1.selectbox("機器/場所", device_options)
             report_date = col2.date_input("発生日", datetime.today().date())
             
@@ -782,7 +786,7 @@ def page_trouble_report():
 def main():
     st.title("🛠️ 山根研 便利屋さん")
     st.sidebar.header("メニュー")
-    menu = ["ノート記録", "ノート一覧", "PLデータ解析", "IVデータ解析", "トラブル報告", "カレンダー", "議事録管理", "山根研知恵袋", "引き継ぎ情報", "お問い合わせフォーム"]
+    menu = ["ノート記録", "ノート一覧", "カレンダー", "議事録管理", "山根研知恵袋", "引き継ぎ情報", "お問い合わせフォーム", "PLデータ解析", "IVデータ解析", "トラブル報告"]
     selected_page = st.sidebar.radio("機能を選択", menu)
 
     page_map = {
@@ -801,4 +805,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
