@@ -1,11 +1,11 @@
 # --------------------------------------------------------------------------
 # Yamane Lab Convenience Tool - Streamlit Application
 #
-# v18.3:
-# - Image display width in page_note_list and page_trouble_report is
-#   limited to a max width of 400px for better layout on large screens.
-# - Deprecated parameter `use_column_width` has been replaced by `use_container_width`
-#   or removed/replaced with `width` parameter (where applicable).
+# v18.7:
+# - Added a new 'トラブル一覧' tab for quick overview of reports.
+# - Enabled multiple file uploads for new trouble reports.
+# - Updated archive viewing to display multiple attached files/images.
+# - Enhanced 'Other' device input handling.
 # --------------------------------------------------------------------------
 
 import streamlit as st
@@ -108,7 +108,7 @@ def get_sheet_as_df(_gc, spreadsheet_name, sheet_name):
         st.warning(f"シート「{sheet_name}」を読み込めません。空の可能性があります。"); return pd.DataFrame()
 
 def upload_file_to_gcs(storage_client, bucket_name, file_uploader_obj, memo_content=""):
-    """ファイルをGoogle Cloud Storageにアップロードし、署名付きURLを生成する。"""
+    """単一ファイルをGoogle Cloud Storageにアップロードし、署名付きURLを生成する。（エピノート、議事録、知恵袋用）"""
     if not file_uploader_obj: return "", ""
     try:
         bucket = storage_client.bucket(bucket_name)
@@ -121,6 +121,7 @@ def upload_file_to_gcs(storage_client, bucket_name, file_uploader_obj, memo_cont
         blob = bucket.blob(destination_blob_name)
         
         with st.spinner(f"'{file_uploader_obj.name}'をアップロード中..."):
+            file_uploader_obj.seek(0) # ストリームを先頭に戻す
             blob.upload_from_file(file_uploader_obj, content_type=file_uploader_obj.type)
 
         expiration_time = timedelta(days=365 * 100)
@@ -130,6 +131,51 @@ def upload_file_to_gcs(storage_client, bucket_name, file_uploader_obj, memo_cont
         return destination_blob_name, signed_url
     except Exception as e:
         st.error(f"ファイルアップロード中にエラー: {e}"); return "アップロード失敗", ""
+
+def upload_files_to_gcs(storage_client, bucket_name, file_uploader_obj_list, memo_content=""):
+    """
+    複数のファイルをGoogle Cloud Storageにアップロードし、ファイル名とURLのリストをJSON文字列として生成する。（トラブル報告用）
+    
+    戻り値: (filenames_json_string, urls_json_string)
+    """
+    if not file_uploader_obj_list: return "[]", "[]"
+    
+    uploaded_data = []
+    bucket = storage_client.bucket(bucket_name)
+
+    try:
+        with st.spinner(f"{len(file_uploader_obj_list)}個のファイルをアップロード中..."):
+            for uploaded_file in file_uploader_obj_list:
+                timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f") # よりユニークなタイムスタンプ
+                file_extension = os.path.splitext(uploaded_file.name)[1]
+                sanitized_memo = re.sub(r'[\\/:*?"<>|\r\n]+', '', memo_content)[:30] if memo_content else "無題"
+                destination_blob_name = f"{timestamp}_{sanitized_memo}_{uploaded_file.name}"
+                
+                blob = bucket.blob(destination_blob_name)
+                
+                # ストリームを先頭に戻してからアップロード
+                uploaded_file.seek(0) 
+                blob.upload_from_file(uploaded_file, content_type=uploaded_file.type)
+
+                expiration_time = timedelta(days=365 * 100)
+                signed_url = blob.generate_signed_url(expiration=expiration_time)
+                
+                uploaded_data.append({
+                    "name": uploaded_file.name,
+                    "blob": destination_blob_name, # GCS上でのファイル名
+                    "url": signed_url
+                })
+
+        st.success(f"📄 {len(uploaded_data)}個のファイルをアップロードしました。")
+        # スプレッドシートには、ファイル名とURLのリストをJSON文字列として保存する
+        filenames_list = [item['blob'] for item in uploaded_data]
+        urls_list = [item['url'] for item in uploaded_data]
+        
+        return json.dumps(filenames_list), json.dumps(urls_list)
+        
+    except Exception as e:
+        st.error(f"ファイルアップロード中にエラー: {e}"); return "[]", "[]"
+
 
 def generate_gmail_link(recipient, subject, body):
     """Gmailの新規作成リンクを生成する。"""
@@ -269,13 +315,13 @@ def page_note_list():
             st.write(f"**カテゴリ:** {row['カテゴリ']}")
             st.write(f"**メモ:**"); st.text(row['メモ'])
             
-            # 修正箇所: get()を使用して安全に列にアクセス
+            # 修正箇所: get()を使用して安全に列にアクセス (ここはJSON形式でない単一ファイルURLを想定)
             file_url = row.get(COLUMN_FILE_URL) 
             file_name = row.get(COLUMN_FILENAME)
 
             if file_url:
                 if file_name and file_name.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
-                    # ★修正点: use_container_widthを削除し、width=400を設定
+                    # 画像幅を400pxに制限
                     st.image(file_url, caption=file_name, width=400)
                 else:
                     st.markdown(f"**写真:** [ファイルを開く]({file_url})", unsafe_allow_html=True)
@@ -299,13 +345,13 @@ def page_note_list():
             st.subheader(f"詳細: {row['タイムスタンプ']}")
             st.write(f"**メモ:**"); st.text(row['メモ'])
             
-            # 修正箇所: get()を使用して安全に列にアクセス
+            # 修正箇所: get()を使用して安全に列にアクセス (ここはJSON形式でない単一ファイルURLを想定)
             file_url = row.get(COLUMN_FILE_URL)
             file_name = row.get(COLUMN_FILENAME)
 
             if file_url:
                 if file_name and file_name.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
-                    # ★修正点: use_container_widthを削除し、width=400を設定
+                    # 画像幅を400pxに制限
                     st.image(file_url, caption=file_name, width=400)
                 else:
                     st.markdown(f"**関連ファイル:** [ファイルを開く]({file_url})", unsafe_allow_html=True)
@@ -698,119 +744,196 @@ def page_trouble_report():
     st.header("🚨 トラブル報告・教訓アーカイブ")
     trouble_sheet_name = 'トラブル報告_データ'
     
-    tab1, tab2 = st.tabs(["アーカイブを閲覧", "新規報告を登録"])
+    # ★修正箇所: タブの順序と名称を変更
+    tab1, tab2, tab3 = st.tabs(["トラブル一覧", "アーカイブを閲覧", "新規報告を登録"])
 
+    # Load data once for all tabs
+    df = get_sheet_as_df(gc, SPREADSHEET_NAME, trouble_sheet_name)
+    
+    if not df.empty:
+        df['タイムスタンプ_dt'] = pd.to_datetime(df['タイムスタンプ'], format="%Y%m%d_%H%M%S")
+        df = df.sort_values(by='タイムスタンプ_dt', ascending=False)
+    
+    # --- Tab 1: トラブル一覧 (New List View) ---
+    with tab1:
+        st.subheader("トラブル報告の概要一覧")
+        if df.empty:
+            st.info("まだトラブル報告は登録されていません。")
+        else:
+            list_df = df.copy()
+            # 報告タイトルの生成: [機器/場所] 発生日: トラブル発生時(冒頭40文字...)
+            list_df['表示タイトル'] = list_df.apply(
+                lambda row: f"[{row['機器/場所']}] {row['発生日']}: {row['トラブル発生時'][:40]}" + ("..." if len(row['トラブル発生時']) > 40 else ""), 
+                axis=1
+            )
+            
+            st.dataframe(
+                list_df[['表示タイトル']], 
+                use_container_width=True,
+                column_config={"表示タイトル": st.column_config.TextColumn("トラブル一覧", help="詳細を見るには、隣の「アーカイブを閲覧」タブで選択してください。")}
+            )
+            st.info("詳細を見るには、隣の「アーカイブを閲覧」タブで、日付や機器・場所で絞り込んでください。")
+
+
+    # --- Tab 2: アーカイブを閲覧 (Display Multiple Images) ---
     with tab2:
+        st.subheader("過去のトラブルアーカイブ")
+        
+        if df.empty:
+            st.info("まだトラブル報告は登録されていません。"); 
+        else:
+            col_filter1, col_filter2 = st.columns(2)
+            device_filter = col_filter1.selectbox("機器/場所で絞り込み", ["すべて"] + df['機器/場所'].unique().tolist(), key="archive_device_filter")
+            
+            filtered_df = df
+            if device_filter != "すべて":
+                filtered_df = df[df['機器/場所'] == device_filter]
+            
+            # Use a slightly more detailed format for the selection box
+            options = {f"[{row['機器/場所']}] {row['発生日']} - {row['トラブル発生時'][:20]}...": idx for idx, row in filtered_df.iterrows()}
+            selected_key = st.selectbox("報告を選択", ["---"] + list(options.keys()), key="archive_selection")
+
+            if selected_key != "---":
+                row = filtered_df.loc[options[selected_key]]
+                st.markdown("---")
+                st.title(f"🚨 {row['機器/場所']} トラブル報告")
+                st.caption(f"発生日: {row['発生日']} | 報告者: {row['報告者'] or '匿名'}")
+                
+                # ★修正箇所: 複数ファイルの表示ロジック
+                file_urls_json = row.get('ファイルURL', '[]')
+                file_names_json = row.get('ファイル名', '[]')
+                
+                st.markdown("---")
+                st.markdown("### 関連ファイル")
+
+                try:
+                    urls = json.loads(file_urls_json)
+                    names = json.loads(file_names_json)
+                    
+                    if urls and names and len(urls) == len(names):
+                        st.info(f"{len(urls)}個のファイルが添付されています。")
+                        
+                        # Display images/links in up to 4 columns
+                        cols = st.columns(min(len(urls), 4)) 
+                        
+                        for i, (url, name) in enumerate(zip(urls, names)):
+                            with cols[i % 4]: 
+                                # Check if it's an image file by extension
+                                if name and name.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
+                                    st.image(url, caption=name, use_column_width=True)
+                                else:
+                                    # Use original file name for the link text
+                                    st.markdown(f"**ファイル {i+1}:** [🔗 {name.split('_')[-1]}]({url})", unsafe_allow_html=True)
+                    else:
+                        st.info("添付ファイルはありません。")
+
+                except json.JSONDecodeError:
+                    # Old single-file format handling (for backward compatibility)
+                    file_url = row.get('ファイルURL')
+                    file_name = row.get('ファイル名')
+                    if file_url:
+                        st.warning("この報告は旧形式のファイル形式で保存されています。")
+                        if file_name and file_name.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
+                            st.image(file_url, caption=file_name, width=400)
+                        else:
+                            st.markdown(f"**関連ファイル:** [ファイルを開く]({file_url})", unsafe_allow_html=True)
+                    else:
+                        st.info("添付ファイルはありません。")
+                
+                st.markdown("---")
+                st.markdown("### 1. 発生時と初期対応")
+                st.info(row['トラブル発生時'])
+                
+                st.markdown("### 2. 原因の究明")
+                st.warning(row['原因/究明'])
+                
+                st.markdown("### 3. 対策と復旧")
+                st.success(row['対策/復旧'])
+
+                st.markdown("### 4. 今後の再発防止策 (教訓)")
+                st.markdown(row['再発防止策'])
+
+
+    # --- Tab 3: 新規報告を登録 (Multiple file upload) ---
+    with tab3:
         st.subheader("新規トラブル報告を記録する")
         with st.form("trouble_report_form", clear_on_submit=True):
             st.write("--- 発生概要 ---")
             col1, col2 = st.columns(2)
+            
             device_options = ["MBE", "XRD", "PL", "IV", "ドラフター", "抵抗加熱蒸着", "RTA", "その他"]
             device = col1.selectbox("機器/場所", device_options)
             report_date = col2.date_input("発生日", datetime.today().date())
+            
+            # ★修正箇所: 「その他」が選択された場合にテキスト入力欄を表示
+            other_device = ""
+            if device == "その他":
+                other_device = st.text_input("具体的な機器/場所を記入してください *")
+                device_to_save = f"その他: {other_device}" if other_device else "その他"
+            else:
+                device_to_save = device
             
             t_occur = st.text_area("1. トラブル発生時、何が起こったか？", key="t_occur_input", height=100)
             t_cause = st.text_area("2. 原因と究明プロセス", key="t_cause_input", height=100)
             t_solution = st.text_area("3. 対策と復旧プロセス", key="t_solution_input", height=100)
             t_prevention = st.text_area("4. 再発防止策（教訓）", key="t_prevention_input", height=100)
             
-            uploaded_file = st.file_uploader("関連写真/ファイル (任意)", type=["jpg", "jpeg", "png", "pdf"])
+            # ★修正箇所: 複数ファイルアップロード
+            uploaded_files = st.file_uploader("関連写真/ファイル（複数選択可）", type=["jpg", "jpeg", "png", "pdf", "txt"], accept_multiple_files=True)
             reporter_name = st.text_input("報告者名（任意）")
             
             submitted = st.form_submit_button("トラブル報告を保存")
             
             if submitted:
+                # 必須項目のチェック
                 if not t_occur or not t_cause or not t_solution:
                     st.error("「発生時」「原因」「対策」は必須項目です。")
-                else:
-                    filename, url = upload_file_to_gcs(storage_client, CLOUD_STORAGE_BUCKET_NAME, uploaded_file, device)
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    
-                    row_data = [
-                        timestamp, device, report_date.isoformat(), t_occur,
-                        t_cause, t_solution, t_prevention,
-                        reporter_name, filename, url
-                    ]
-                    
-                    try:
-                        gc.open(SPREADSHEET_NAME).worksheet(trouble_sheet_name).append_row(row_data)
-                        st.success("トラブル報告をアーカイブしました。"); st.cache_data.clear(); st.rerun()
-                    except Exception as e:
-                        st.error(f"データの書き込み中にエラーが発生しました。シート名 '{trouble_sheet_name}' が存在するか確認してください。")
-                        st.exception(e)
-
-    with tab1:
-        st.subheader("過去のトラブルアーカイブ")
-        df = get_sheet_as_df(gc, SPREADSHEET_NAME, trouble_sheet_name)
-        
-        if df.empty:
-            st.info("まだトラブル報告は登録されていません。"); return
-        
-        df['タイムスタンプ_dt'] = pd.to_datetime(df['タイムスタンプ'], format="%Y%m%d_%H%M%S")
-        df = df.sort_values(by='タイムスタンプ_dt', ascending=False)
-        
-        col_filter1, col_filter2 = st.columns(2)
-        device_filter = col_filter1.selectbox("機器/場所で絞り込み", ["すべて"] + df['機器/場所'].unique().tolist())
-        
-        filtered_df = df
-        if device_filter != "すべて":
-            filtered_df = df[df['機器/場所'] == device_filter]
-        
-        options = {f"[{row['機器/場所']}] {row['発生日']}": idx for idx, row in filtered_df.iterrows()}
-        selected_key = st.selectbox("報告を選択", ["---"] + list(options.keys()))
-
-        if selected_key != "---":
-            row = filtered_df.loc[options[selected_key]]
-            st.markdown("---")
-            st.title(f"🚨 {row['機器/場所']} トラブル報告")
-            st.caption(f"発生日: {row['発生日']} | 報告者: {row['報告者'] or '匿名'}")
-            
-            # 画像またはリンクの表示
-            if row.get('ファイルURL') and row.get('ファイル名'):
-                file_url = row['ファイルURL']
-                file_name = row['ファイル名']
-                if file_name.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
-                    st.markdown("---")
-                    st.markdown("**関連写真**")
-                    # ★修正点: use_container_widthを削除し、width=400を設定
-                    st.image(file_url, caption=file_name, width=400)
-                else:
-                    st.markdown(f"**関連ファイル:** [ファイルを開く]({file_url})", unsafe_allow_html=True)
-            
-            st.markdown("### 1. 発生時と初期対応")
-            st.info(row['トラブル発生時'])
-            
-            st.markdown("### 2. 原因の究明")
-            st.warning(row['原因/究明'])
-            
-            st.markdown("### 3. 対策と復旧")
-            st.success(row['対策/復旧'])
-
-            st.markdown("### 4. 今後の再発防止策 (教訓)")
-            st.markdown(row['再発防止策'])
+                    st.stop()
+                
+                # 「その他」選択時の具体的な機器名のチェック
+                if device == "その他" and not other_device:
+                    st.error("「その他」を選択した場合は、具体的な機器/場所を記入してください。")
+                    st.stop()
+                
+                # ★修正箇所: 複数ファイルアップロード関数の呼び出し
+                filenames_json, urls_json = upload_files_to_gcs(storage_client, CLOUD_STORAGE_BUCKET_NAME, uploaded_files, device_to_save)
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                
+                row_data = [
+                    timestamp, device_to_save, report_date.isoformat(), t_occur,
+                    t_cause, t_solution, t_prevention,
+                    reporter_name, filenames_json, urls_json # JSON文字列として保存
+                ]
+                
+                try:
+                    gc.open(SPREADSHEET_NAME).worksheet(trouble_sheet_name).append_row(row_data)
+                    st.success("トラブル報告をアーカイブしました。"); st.cache_data.clear(); st.rerun()
+                except Exception as e:
+                    st.error(f"データの書き込み中にエラーが発生しました。シート名 '{trouble_sheet_name}' が存在するか確認してください。")
+                    st.exception(e)
 
 
 # --- Main App Logic ---
 def main():
     st.title("🛠️ 山根研 便利屋さん")
     st.sidebar.header("メニュー")
+    # メニューの並び順を更新
     menu = ["ノート記録", "ノート一覧", "PLデータ解析", "IVデータ解析", "トラブル報告", "カレンダー", "議事録管理", "山根研知恵袋", "引き継ぎ情報", "お問い合わせフォーム"]
     selected_page = st.sidebar.radio("機能を選択", menu)
 
     page_map = {
         "ノート記録": page_note_recording,
         "ノート一覧": page_note_list,
+        "PLデータ解析": page_pl_analysis,
+        "IVデータ解析": page_iv_analysis,
+        "トラブル報告": page_trouble_report,
         "カレンダー": page_calendar,
         "議事録管理": page_minutes,
         "山根研知恵袋": page_qa,
         "引き継ぎ情報": page_handover,
         "お問い合わせフォーム": page_inquiry,
-        "PLデータ解析": page_pl_analysis,
-        "IVデータ解析": page_iv_analysis,
-        "トラブル報告": page_trouble_report,
     }
     page_map[selected_page]()
 
 if __name__ == "__main__":
     main()
-
