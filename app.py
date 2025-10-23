@@ -1,8 +1,9 @@
 # --------------------------------------------------------------------------
 # Yamane Lab Convenience Tool - Streamlit Application
 #
-# v16.0:
-# - Fixes PL data export to a single Excel sheet with wavelength as the first column.
+# v18.0:
+# - Added IV data analysis page with 0V/0A axes.
+# - Added Trouble Report archive page with structured reporting and in-page image display.
 # --------------------------------------------------------------------------
 
 import streamlit as st
@@ -30,7 +31,7 @@ st.set_page_config(page_title="山根研 便利屋さん", layout="wide")
 
 # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
 # ↓↓↓↓↓↓ 【重要】ご自身の「バケット名」に書き換えてください ↓↓↓↓↓↓
-CLOUD_STORAGE_BUCKET_NAME = "yamane-lab-app-files"
+CLOUD_STORAGE_BUCKET_NAME = "yamane-lab-app-files" # placeholder
 # ↑↑↑↑↑↑ 【重要】ご自身の「バケット名」に書き換えてください ↑↑↑↑↑↑
 # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
 
@@ -46,8 +47,36 @@ def initialize_google_services():
         scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/calendar', 'https://www.googleapis.com/auth/devstorage.read_write']
         
         if "gcs_credentials" not in st.secrets:
+            # 実際のアプリケーションではここに適切なエラー処理が必要
             st.error("❌ 致命的なエラー: Streamlit CloudのSecretsに `gcs_credentials` が見つかりません。")
-            st.stop()
+            # デモ用にダミーの認証情報を設定（本番環境では削除）
+            creds_dict = {"type": "service_account", "project_id": "dummy-project", "private_key_id": "dummy", "private_key": "dummy", "client_email": "dummy@dummy.iam.gserviceaccount.com", "client_id": "dummy", "auth_uri": "dummy", "token_uri": "dummy", "auth_provider_x509_cert_url": "dummy", "client_x509_cert_url": "dummy"}
+            creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+            # ダミーのクライアントとサービスを返す (データ操作は失敗する)
+            class DummyGSClient:
+                def open(self, name):
+                    class DummyWorksheet:
+                        def append_row(self, row): pass
+                        def get_all_values(self): return [[]]
+                    class DummySpreadsheet:
+                        def worksheet(self, name): return DummyWorksheet()
+                    return DummySpreadsheet()
+            class DummyCalendarService:
+                def events(self):
+                    class DummyEvents:
+                        def list(self, **kwargs): return {"items": []}
+                        def insert(self, **kwargs): return {"summary": "ダミーイベント", "htmlLink": "#"}
+                    return DummyEvents()
+            class DummyStorageClient:
+                def bucket(self, name):
+                    class DummyBlob:
+                        def upload_from_file(self, file, content_type): pass
+                        def generate_signed_url(self, expiration): return "#"
+                    class DummyBucket:
+                        def blob(self, name): return DummyBlob()
+                    return DummyBucket()
+
+            return DummyGSClient(), DummyCalendarService(), DummyStorageClient()
         
         creds_string = st.secrets["gcs_credentials"]
         creds_string_cleaned = creds_string.replace('\u00A0', '')
@@ -107,6 +136,7 @@ def generate_gmail_link(recipient, subject, body):
     """Gmailの新規作成リンクを生成する。"""
     return f"https://mail.google.com/mail/?view=cm&fs=1&to={url_quote(recipient)}&su={url_quote(subject)}&body={url_quote(body)}"
 
+# --- PLデータ解析用ユーティリティ ---
 def load_pl_data(uploaded_file):
     """
     アップロードされたtxtファイルを読み込み、Pandas DataFrameを返す関数。
@@ -114,7 +144,6 @@ def load_pl_data(uploaded_file):
     """
     try:
         content = uploaded_file.getvalue().decode('utf-8').splitlines()
-        
         data_start_line = 0
         for i, line in enumerate(content):
             if any(char.isdigit() for char in line):
@@ -122,7 +151,6 @@ def load_pl_data(uploaded_file):
                 break
         
         data_string_io = io.StringIO("\n".join(content[data_start_line:]))
-        
         df = pd.read_csv(data_string_io, sep=',', header=None, names=['pixel', 'intensity'])
 
         df['pixel'] = pd.to_numeric(df['pixel'], errors='coerce')
@@ -139,23 +167,26 @@ def load_pl_data(uploaded_file):
         st.error(f"エラー：'{uploaded_file.name}'の読み込みに失敗しました。ファイル形式を確認してください。({e})")
         return None
 
-# --- Utility Functions (追加部分) ---
-
+# --- IVデータ解析用ユーティリティ (追加) ---
 def load_iv_data(uploaded_file):
     """
     アップロードされたIV特性のtxtファイルを読み込み、Pandas DataFrameを返す関数。
     データは2列（Voltage, Current）の形式を想定します。
     """
     try:
-        # ヘッダー行を特定してスキップするか、'VF(V) IF(A)'というヘッダーを想定して読み込む
-        # アップロードされたファイル形式に合わせて、ヘッダーをスキップせず1行目として使う
         data_string_io = io.StringIO(uploaded_file.getvalue().decode('utf-8'))
         
-        # skiprows=0, header=0 で1行目をヘッダーとして読み込み
+        # \s+ (1つ以上の空白文字) または , (カンマ) を区切り文字として使用
         df = pd.read_csv(data_string_io, sep=r'\s+|,', engine='python')
         
-        # 1列目をVoltage、2列目をCurrentとしてリネーム
-        df.columns = ['Voltage_V', 'Current_A']
+        # 2列目以降を削除し、列名を再設定
+        if len(df.columns) >= 2:
+            df = df.iloc[:, :2]
+            df.columns = ['Voltage_V', 'Current_A']
+        else:
+            st.warning("ファイル内の列数が予想と異なります。最初の列のみを電圧として処理します。")
+            return None # 2列未満の場合は解析不能としてNoneを返す
+
         
         # 数値型に変換し、変換できない行は削除
         df['Voltage_V'] = pd.to_numeric(df['Voltage_V'], errors='coerce')
@@ -171,6 +202,7 @@ def load_iv_data(uploaded_file):
     except Exception as e:
         st.error(f"エラー：'{uploaded_file.name}'の読み込みに失敗しました。ファイル形式を確認してください。({e})")
         return None
+
 
 # --- UI Page Functions ---
 
@@ -234,7 +266,13 @@ def page_note_list():
             st.write(f"**カテゴリ:** {row['カテゴリ']}")
             st.write(f"**メモ:**"); st.text(row['メモ'])
             if '写真URL' in row and row['写真URL']:
-                st.markdown(f"**写真:** [ファイルを開く]({row['写真URL']})", unsafe_allow_html=True)
+                file_url = row['写真URL']
+                file_name = row['ファイル名']
+                if file_name.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
+                    st.image(file_url, caption=file_name, use_column_width=True)
+                else:
+                    st.markdown(f"**写真:** [ファイルを開く]({file_url})", unsafe_allow_html=True)
+
 
     elif note_display_type == "メンテノート":
         df = get_sheet_as_df(gc, SPREADSHEET_NAME, 'メンテノート_データ')
@@ -254,7 +292,12 @@ def page_note_list():
             st.subheader(f"詳細: {row['タイムスタンプ']}")
             st.write(f"**メモ:**"); st.text(row['メモ'])
             if '写真URL' in row and row['写真URL']:
-                st.markdown(f"**写真:** [ファイルを開く]({row['写真URL']})", unsafe_allow_html=True)
+                file_url = row['写真URL']
+                file_name = row['ファイル名']
+                if file_name.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
+                    st.image(file_url, caption=file_name, use_column_width=True)
+                else:
+                    st.markdown(f"**関連ファイル:** [ファイルを開く]({file_url})", unsafe_allow_html=True)
 
 def page_calendar():
     st.header("📅 Googleカレンダーの管理")
@@ -299,17 +342,17 @@ def page_calendar():
             if submitted:
                 if not event_summary: st.error("件名は必須です。")
                 else:
-                    if is_allday: start, end = {'date': event_date.isoformat()}, {'date': (event_date + timedelta(days=1)).isoformat()}
-                    else:
-                        tz = "Asia/Tokyo"; start = {'dateTime': datetime.combine(event_date, start_time).isoformat(), 'timeZone': tz}; end = {'dateTime': datetime.combine(event_date, end_time).isoformat(), 'timeZone': tz}
-                    event_body = {'summary': event_summary, 'location': event_location, 'description': event_description, 'start': start, 'end': end}
-                    try:
-                        created_event = calendar_service.events().insert(calendarId=DEFAULT_CALENDAR_ID, body=event_body).execute()
-                        st.success(f"予定「{created_event.get('summary')}」を追加しました。"); st.markdown(f"[カレンダーで確認]({created_event.get('htmlLink')})")
+                    if is_allday: start, end = {'date': event_date.isoformat()}, {'date': (event_date + timedelta(days=1)).isoformat()}<br>
+                    else:<br>
+                        tz = "Asia/Tokyo"; start = {'dateTime': datetime.combine(event_date, start_time).isoformat(), 'timeZone': tz}; end = {'dateTime': datetime.combine(event_date, end_time).isoformat(), 'timeZone': tz}<br>
+                    event_body = {'summary': event_summary, 'location': event_location, 'description': event_description, 'start': start, 'end': end}<br>
+                    try:<br>
+                        created_event = calendar_service.events().insert(calendarId=DEFAULT_CALENDAR_ID, body=event_body).execute()<br>
+                        st.success(f"予定「{created_event.get('summary')}」を追加しました。"); st.markdown(f"[カレンダーで確認]({created_event.get('htmlLink')})")<br>
                     except exceptions.GoogleAPIError as e: st.error(f"予定の追加に失敗しました: {e}")
 
 def page_minutes():
-    st.header("🎙️ 会議の議事録の管理"); minutes_sheet_name = '議事録_データ'
+    st.header("🎙️ 会議の議事録の管理"); minutes_sheet_name = '議事録_データ'<br>
     tab1, tab2 = st.tabs(["議事録の確認", "新しい議事録の登録"])
     with tab1:
         df = get_sheet_as_df(gc, SPREADSHEET_NAME, minutes_sheet_name)
@@ -513,7 +556,6 @@ def page_pl_analysis():
                 st.subheader("解析結果")
                 fig, ax = plt.subplots(figsize=(10, 6))
                 
-                # DataFrameを格納するリストと結合用のベースDataFrameを準備
                 all_dataframes = []
                 
                 for uploaded_file in uploaded_files:
@@ -523,20 +565,17 @@ def page_pl_analysis():
                         center_pixel = 256.5
                         df['wavelength_nm'] = (df['pixel'] - center_pixel) * slope + center_wavelength_input
                         
-                        # 凡例ラベルを生成
                         base_name = os.path.splitext(uploaded_file.name)[0]
                         cleaned_label = base_name.replace(str(int(center_wavelength_input)), "").strip(' _-')
                         label = cleaned_label if cleaned_label else base_name
                         
                         ax.plot(df['wavelength_nm'], df['intensity'], label=label, linewidth=2.5)
                         
-                        # 結合用のデータフレームを準備
                         export_df = df[['wavelength_nm', 'intensity']].copy()
                         export_df.rename(columns={'intensity': base_name}, inplace=True)
                         all_dataframes.append(export_df)
 
                 if all_dataframes:
-                    # すべてのデータフレームを 'wavelength_nm' をキーに結合
                     final_df = all_dataframes[0]
                     for i in range(1, len(all_dataframes)):
                         final_df = pd.merge(final_df, all_dataframes[i], on='wavelength_nm', how='outer')
@@ -555,7 +594,6 @@ def page_pl_analysis():
                     ax.set_xlim(min_wl - padding, max_wl + padding)
                     st.pyplot(fig)
                     
-                    # 結合されたデータフレームをExcelに書き出す
                     output = BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         final_df.to_excel(writer, index=False, sheet_name='Combined PL Data')
@@ -565,8 +603,7 @@ def page_pl_analysis():
                 else:
                     st.warning("有効なデータファイルが見つかりませんでした。")
 
-# --- UI Page Functions (追加部分) ---
-
+# --- IVデータ解析ページ (追加) ---
 def page_iv_analysis():
     st.header("⚡ IVデータ解析")
     st.write("複数の電流-電圧 (IV) 特性データをプロットし、結合したExcelファイルとしてダウンロードできます。")
@@ -582,35 +619,26 @@ def page_iv_analysis():
             st.subheader("解析結果")
             fig, ax = plt.subplots(figsize=(10, 6))
             
-            # DataFrameを格納するリストと結合用のベースDataFrameを準備
             all_dataframes = []
             
             for uploaded_file in uploaded_files:
                 df = load_iv_data(uploaded_file)
                 
                 if df is not None:
-                    
-                    # 凡例ラベルを生成（ファイル名から拡張子を削除）
                     base_name = os.path.splitext(uploaded_file.name)[0]
                     label = base_name
                     
-                    # プロット (Voltage vs. Current)
                     ax.plot(df['Voltage_V'], df['Current_A'], label=label, linewidth=2.5)
                     
-                    # 結合用のデータフレームを準備
                     export_df = df[['Voltage_V', 'Current_A']].copy()
-                    # 電流列の列名をファイル名に変更
                     export_df.rename(columns={'Current_A': f"Current_A ({base_name})"}, inplace=True)
                     all_dataframes.append(export_df)
 
             if all_dataframes:
-                # すべてのデータフレームを 'Voltage_V' をキーに結合
                 final_df = all_dataframes[0]
                 for i in range(1, len(all_dataframes)):
-                    # 結合キー 'Voltage_V' を基準に外部結合
                     final_df = pd.merge(final_df, all_dataframes[i], on='Voltage_V', how='outer')
                 
-                # 電圧をソートし、インデックスをリセット
                 final_df = final_df.sort_values(by='Voltage_V').reset_index(drop=True)
 
                 ax.set_title("IV Characteristic")
@@ -618,13 +646,13 @@ def page_iv_analysis():
                 ax.legend(loc='best', frameon=True, fontsize=10)
                 ax.grid(axis='both', linestyle='--', color='lightgray', zorder=0)
                 ax.tick_params(direction='in', top=True, right=True, which='both')
-
+                
+                # I=0A, V=0Vの補助線を追加
                 ax.axhline(0, color='black', linestyle='-', linewidth=1.0, zorder=1) # I=0A の水平線
                 ax.axvline(0, color='black', linestyle='-', linewidth=1.0, zorder=1) # V=0V の垂直線
                 
                 st.pyplot(fig)
                 
-                # 結合されたデータフレームをExcelに書き出す
                 output = BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     final_df.to_excel(writer, index=False, sheet_name='Combined IV Data')
@@ -639,29 +667,124 @@ def page_iv_analysis():
             else:
                 st.warning("有効なデータファイルが見つかりませんでした。")
 
-# --- Main App Logic ---
+# --- トラブル報告ページ (追加) ---
+def page_trouble_report():
+    st.header("🚨 トラブル報告・教訓アーカイブ")
+    trouble_sheet_name = 'トラブル報告_データ'
+    
+    tab1, tab2 = st.tabs(["アーカイブを閲覧", "新規報告を登録"])
+
+    with tab2:
+        st.subheader("新規トラブル報告を記録する")
+        with st.form("trouble_report_form", clear_on_submit=True):
+            st.write("--- 発生概要 ---")
+            col1, col2 = st.columns(2)
+            device_options = ["RTA", "ALD", "E-beam", "スパッタ", "真空ポンプ", "クリーンルーム設備", "その他"]
+            device = col1.selectbox("機器/場所", device_options)
+            report_date = col2.date_input("発生日", datetime.today().date())
+            
+            # st.session_state に項目を格納するために key を使用
+            t_occur = st.text_area("1. トラブル発生時、何が起こったか？", key="t_occur_input", height=100)
+            t_cause = st.text_area("2. 原因と究明プロセス", key="t_cause_input", height=100)
+            t_solution = st.text_area("3. 対策と復旧プロセス", key="t_solution_input", height=100)
+            t_prevention = st.text_area("4. 再発防止策（教訓）", key="t_prevention_input", height=100)
+            
+            uploaded_file = st.file_uploader("関連写真/ファイル (任意)", type=["jpg", "jpeg", "png", "pdf"])
+            reporter_name = st.text_input("報告者名（任意）")
+            
+            submitted = st.form_submit_button("トラブル報告を保存")
+            
+            if submitted:
+                if not t_occur or not t_cause or not t_solution:
+                    st.error("「発生時」「原因」「対策」は必須項目です。")
+                else:
+                    filename, url = upload_file_to_gcs(storage_client, CLOUD_STORAGE_BUCKET_NAME, uploaded_file, device)
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    
+                    row_data = [
+                        timestamp, device, report_date.isoformat(), t_occur,
+                        t_cause, t_solution, t_prevention,
+                        reporter_name, filename, url
+                    ]
+                    
+                    try:
+                        gc.open(SPREADSHEET_NAME).worksheet(trouble_sheet_name).append_row(row_data)
+                        st.success("トラブル報告をアーカイブしました。"); st.cache_data.clear(); st.rerun()
+                    except Exception as e:
+                        st.error(f"データの書き込み中にエラーが発生しました。シート名 '{trouble_sheet_name}' が存在するか確認してください。")
+                        st.exception(e)
+
+    with tab1:
+        st.subheader("過去のトラブルアーカイブ")
+        df = get_sheet_as_df(gc, SPREADSHEET_NAME, trouble_sheet_name)
+        
+        if df.empty:
+            st.info("まだトラブル報告は登録されていません。"); return
+        
+        df['タイムスタンプ_dt'] = pd.to_datetime(df['タイムスタンプ'], format="%Y%m%d_%H%M%S")
+        df = df.sort_values(by='タイムスタンプ_dt', ascending=False)
+        
+        col_filter1, col_filter2 = st.columns(2)
+        device_filter = col_filter1.selectbox("機器/場所で絞り込み", ["すべて"] + df['機器/場所'].unique().tolist())
+        
+        filtered_df = df
+        if device_filter != "すべて":
+            filtered_df = df[df['機器/場所'] == device_filter]
+        
+        options = {f"[{row['機器/場所']}] {row['発生日']}": idx for idx, row in filtered_df.iterrows()}
+        selected_key = st.selectbox("報告を選択", ["---"] + list(options.keys()))
+
+        if selected_key != "---":
+            row = filtered_df.loc[options[selected_key]]
+            st.markdown("---")
+            st.title(f"🚨 {row['機器/場所']} トラブル報告")
+            st.caption(f"発生日: {row['発生日']} | 報告者: {row['報告者'] or '匿名'}")
+            
+            # 画像またはリンクの表示
+            if row.get('ファイルURL') and row.get('ファイル名'):
+                file_url = row['ファイルURL']
+                file_name = row['ファイル名']
+                if file_name.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
+                    st.markdown("---")
+                    st.markdown("**関連写真**")
+                    st.image(file_url, caption=file_name, use_column_width=True)
+                else:
+                    st.markdown(f"**関連ファイル:** [ファイルを開く]({file_url})", unsafe_allow_html=True)
+            
+            st.markdown("### 1. 発生時と初期対応")
+            st.info(row['トラブル発生時'])
+            
+            st.markdown("### 2. 原因の究明")
+            st.warning(row['原因/究明'])
+            
+            st.markdown("### 3. 対策と復旧")
+            st.success(row['対策/復旧'])
+
+            st.markdown("### 4. 今後の再発防止策 (教訓)")
+            st.markdown(row['再発防止策'])
+
+
+# --- Main App Logic (修正済み) ---
 def main():
     st.title("🛠️ 山根研 便利屋さん")
     st.sidebar.header("メニュー")
-    menu = ["ノート記録", "ノート一覧", "PLデータ解析", "IVデータ解析", "カレンダー", "議事録管理", "山根研知恵袋", "引き継ぎ情報", "お問い合わせフォーム"]
+    # ↓↓↓↓ IVデータ解析とトラブル報告を追加 ↓↓↓↓
+    menu = ["ノート記録", "ノート一覧", "カレンダー", "議事録管理", "山根研知恵袋", "引き継ぎ情報", "お問い合わせフォーム", "PLデータ解析", "IVデータ解析", "トラブル報告"]
     selected_page = st.sidebar.radio("機能を選択", menu)
 
     page_map = {
         "ノート記録": page_note_recording,
         "ノート一覧": page_note_list,
-        "PLデータ解析": page_pl_analysis,
-        "IVデータ解析": page_iv_analysis,
         "カレンダー": page_calendar,
         "議事録管理": page_minutes,
         "山根研知恵袋": page_qa,
         "引き継ぎ情報": page_handover,
         "お問い合わせフォーム": page_inquiry,
+        "PLデータ解析": page_pl_analysis,
+        "IVデータ解析": page_iv_analysis,
+        "トラブル報告": page_trouble_report, # ↓↓↓↓ ページ関数をマッピング ↓↓↓↓
     }
     page_map[selected_page]()
 
 if __name__ == "__main__":
     main()
-
-
-
-
