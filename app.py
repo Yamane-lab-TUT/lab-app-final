@@ -1,10 +1,9 @@
 # --------------------------------------------------------------------------
 # Yamane Lab Convenience Tool - Streamlit Application
 #
-# v18.8:
-# - FIXED: "Other" device selection now correctly displays the text input field.
-# - ADDED: A mandatory "Subject/Title" field to the new trouble report form.
-# - UPDATED: The trouble list now uses the new "Subject/Title" for better overview.
+# v18.9:
+# - FIXED: Deprecation warning for st.image(use_column_width) has been fixed 
+#          by replacing it with st.image(use_container_width).
 # --------------------------------------------------------------------------
 
 import streamlit as st
@@ -856,7 +855,8 @@ def page_trouble_report():
                             
                             # Check if it's an image file by extension
                             if display_name and display_name.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
-                                st.image(url, caption=display_name, use_column_width=True)
+                                # ★修正箇所: use_column_width=True を use_container_width=True に変更
+                                st.image(url, caption=display_name, use_container_width=True)
                             else:
                                 st.markdown(f"**ファイル {i+1}:** [🔗 {display_name}]({url})", unsafe_allow_html=True)
                 else:
