@@ -705,7 +705,7 @@ def page_trouble_report():
         with st.form("trouble_report_form", clear_on_submit=True):
             st.write("--- 発生概要 ---")
             col1, col2 = st.columns(2)
-            device_options = ["RTA", "ALD", "E-beam", "スパッタ", "真空ポンプ", "クリーンルーム設備", "その他"]
+            device_options = ["MBE", "XRD", "PL", "IV", "ドラフター", "抵抗加熱蒸着", "RTA", "その他"]
             device = col1.selectbox("機器/場所", device_options)
             report_date = col2.date_input("発生日", datetime.today().date())
             
@@ -794,7 +794,7 @@ def page_trouble_report():
 def main():
     st.title("🛠️ 山根研 便利屋さん")
     st.sidebar.header("メニュー")
-    menu = ["ノート記録", "ノート一覧", "カレンダー", "議事録管理", "山根研知恵袋", "引き継ぎ情報", "お問い合わせフォーム", "PLデータ解析", "IVデータ解析", "トラブル報告"]
+    menu = ["ノート記録", "ノート一覧", "PLデータ解析", "IVデータ解析", "トラブル報告", "カレンダー", "議事録管理", "山根研知恵袋", "引き継ぎ情報", "お問い合わせフォーム"]
     selected_page = st.sidebar.radio("機能を選択", menu)
 
     page_map = {
@@ -813,3 +813,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
