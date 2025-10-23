@@ -139,6 +139,39 @@ def load_pl_data(uploaded_file):
         st.error(f"エラー：'{uploaded_file.name}'の読み込みに失敗しました。ファイル形式を確認してください。({e})")
         return None
 
+# --- Utility Functions (追加部分) ---
+
+def load_iv_data(uploaded_file):
+    """
+    アップロードされたIV特性のtxtファイルを読み込み、Pandas DataFrameを返す関数。
+    データは2列（Voltage, Current）の形式を想定します。
+    """
+    try:
+        # ヘッダー行を特定してスキップするか、'VF(V) IF(A)'というヘッダーを想定して読み込む
+        # アップロードされたファイル形式に合わせて、ヘッダーをスキップせず1行目として使う
+        data_string_io = io.StringIO(uploaded_file.getvalue().decode('utf-8'))
+        
+        # skiprows=0, header=0 で1行目をヘッダーとして読み込み
+        df = pd.read_csv(data_string_io, sep=r'\s+|,', engine='python')
+        
+        # 1列目をVoltage、2列目をCurrentとしてリネーム
+        df.columns = ['Voltage_V', 'Current_A']
+        
+        # 数値型に変換し、変換できない行は削除
+        df['Voltage_V'] = pd.to_numeric(df['Voltage_V'], errors='coerce')
+        df['Current_A'] = pd.to_numeric(df['Current_A'], errors='coerce')
+        df.dropna(inplace=True)
+        
+        if df.empty:
+            st.warning(f"警告：'{uploaded_file.name}'に有効なデータが含まれていません。ファイルの内容を確認してください。")
+            return None
+        
+        return df
+
+    except Exception as e:
+        st.error(f"エラー：'{uploaded_file.name}'の読み込みに失敗しました。ファイル形式を確認してください。({e})")
+        return None
+
 # --- UI Page Functions ---
 
 def page_note_recording():
@@ -532,6 +565,77 @@ def page_pl_analysis():
                 else:
                     st.warning("有効なデータファイルが見つかりませんでした。")
 
+# --- UI Page Functions (追加部分) ---
+
+def page_iv_analysis():
+    st.header("⚡ IVデータ解析")
+    st.write("複数の電流-電圧 (IV) 特性データをプロットし、結合したExcelファイルとしてダウンロードできます。")
+
+    with st.container(border=True):
+        uploaded_files = st.file_uploader(
+            "IV測定データファイル（複数選択可）をアップロード",
+            type=['txt', 'csv'],
+            accept_multiple_files=True
+        )
+
+        if uploaded_files:
+            st.subheader("解析結果")
+            fig, ax = plt.subplots(figsize=(10, 6))
+            
+            # DataFrameを格納するリストと結合用のベースDataFrameを準備
+            all_dataframes = []
+            
+            for uploaded_file in uploaded_files:
+                df = load_iv_data(uploaded_file)
+                
+                if df is not None:
+                    
+                    # 凡例ラベルを生成（ファイル名から拡張子を削除）
+                    base_name = os.path.splitext(uploaded_file.name)[0]
+                    label = base_name
+                    
+                    # プロット (Voltage vs. Current)
+                    ax.plot(df['Voltage_V'], df['Current_A'], label=label, linewidth=2.5)
+                    
+                    # 結合用のデータフレームを準備
+                    export_df = df[['Voltage_V', 'Current_A']].copy()
+                    # 電流列の列名をファイル名に変更
+                    export_df.rename(columns={'Current_A': f"Current_A ({base_name})"}, inplace=True)
+                    all_dataframes.append(export_df)
+
+            if all_dataframes:
+                # すべてのデータフレームを 'Voltage_V' をキーに結合
+                final_df = all_dataframes[0]
+                for i in range(1, len(all_dataframes)):
+                    # 結合キー 'Voltage_V' を基準に外部結合
+                    final_df = pd.merge(final_df, all_dataframes[i], on='Voltage_V', how='outer')
+                
+                # 電圧をソートし、インデックスをリセット
+                final_df = final_df.sort_values(by='Voltage_V').reset_index(drop=True)
+
+                ax.set_title("IV Characteristic")
+                ax.set_xlabel("Voltage [V]"); ax.set_ylabel("Current [A]")
+                ax.legend(loc='best', frameon=True, fontsize=10)
+                ax.grid(axis='both', linestyle='--', color='lightgray', zorder=0)
+                ax.tick_params(direction='in', top=True, right=True, which='both')
+                
+                st.pyplot(fig)
+                
+                # 結合されたデータフレームをExcelに書き出す
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    final_df.to_excel(writer, index=False, sheet_name='Combined IV Data')
+
+                processed_data = output.getvalue()
+                st.download_button(
+                    label="📈 Excelデータとしてダウンロード",
+                    data=processed_data,
+                    file_name=f"iv_analysis_combined_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            else:
+                st.warning("有効なデータファイルが見つかりませんでした。")
+
 # --- Main App Logic ---
 def main():
     st.title("🛠️ 山根研 便利屋さん")
@@ -542,15 +646,17 @@ def main():
     page_map = {
         "ノート記録": page_note_recording,
         "ノート一覧": page_note_list,
+        "PLデータ解析": page_pl_analysis,
+        "IVデータ解析": page_iv_analysis,
         "カレンダー": page_calendar,
         "議事録管理": page_minutes,
         "山根研知恵袋": page_qa,
         "引き継ぎ情報": page_handover,
         "お問い合わせフォーム": page_inquiry,
-        "PLデータ解析": page_pl_analysis,
     }
     page_map[selected_page]()
 
 if __name__ == "__main__":
     main()
+
 
