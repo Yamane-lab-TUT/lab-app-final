@@ -1,9 +1,11 @@
 # --------------------------------------------------------------------------
 # Yamane Lab Convenience Tool - Streamlit Application
 #
-# v18.2:
-# - Syntax errors caused by unexpected HTML <br> tags fully fixed.
-# - Image display logic in page_note_list is unified to display images directly.
+# v18.3:
+# - Image display width in page_note_list and page_trouble_report is
+#   limited to a max width of 400px for better layout on large screens.
+# - Deprecated parameter `use_column_width` has been replaced by `use_container_width`
+#   or removed/replaced with `width` parameter (where applicable).
 # --------------------------------------------------------------------------
 
 import streamlit as st
@@ -237,6 +239,10 @@ def page_note_list():
     st.header("📓 登録済みのノート一覧")
     note_display_type = st.radio("表示するノート", ("エピノート", "メンテノート"), horizontal=True, key="note_display_type")
     
+    # 列名の安全な取得
+    COLUMN_FILENAME = 'ファイル名'
+    COLUMN_FILE_URL = '写真URL' 
+
     if note_display_type == "エピノート":
         df = get_sheet_as_df(gc, SPREADSHEET_NAME, 'エピノート_データ')
         if df.empty:
@@ -263,12 +269,14 @@ def page_note_list():
             st.write(f"**カテゴリ:** {row['カテゴリ']}")
             st.write(f"**メモ:**"); st.text(row['メモ'])
             
-            # ✅ 修正済み: エピノートの画像表示ロジック
-            if '写真URL' in row and row['写真URL']:
-                file_url = row['写真URL']
-                file_name = row['ファイル名']
-                if file_name.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
-                    st.image(file_url, caption=file_name, use_column_width=True)
+            # 修正箇所: get()を使用して安全に列にアクセス
+            file_url = row.get(COLUMN_FILE_URL) 
+            file_name = row.get(COLUMN_FILENAME)
+
+            if file_url:
+                if file_name and file_name.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
+                    # ★修正点: use_container_widthを削除し、width=400を設定
+                    st.image(file_url, caption=file_name, width=400)
                 else:
                     st.markdown(f"**写真:** [ファイルを開く]({file_url})", unsafe_allow_html=True)
 
@@ -291,12 +299,14 @@ def page_note_list():
             st.subheader(f"詳細: {row['タイムスタンプ']}")
             st.write(f"**メモ:**"); st.text(row['メモ'])
             
-            # ✅ 修正済み: メンテノートの画像表示ロジック
-            if '写真URL' in row and row['写真URL']:
-                file_url = row['写真URL']
-                file_name = row['ファイル名']
-                if file_name.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
-                    st.image(file_url, caption=file_name, use_column_width=True)
+            # 修正箇所: get()を使用して安全に列にアクセス
+            file_url = row.get(COLUMN_FILE_URL)
+            file_name = row.get(COLUMN_FILENAME)
+
+            if file_url:
+                if file_name and file_name.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
+                    # ★修正点: use_container_widthを削除し、width=400を設定
+                    st.image(file_url, caption=file_name, width=400)
                 else:
                     st.markdown(f"**関連ファイル:** [ファイルを開く]({file_url})", unsafe_allow_html=True)
 
@@ -614,7 +624,7 @@ def page_pl_analysis():
                     st.pyplot(fig)
                     
                     output = BytesIO()
-                    with pd.ExcelWriter(output, engine='openypxl') as writer:
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         final_df.to_excel(writer, index=False, sheet_name='Combined PL Data')
 
                     processed_data = output.getvalue()
@@ -664,11 +674,8 @@ def page_iv_analysis():
                 ax.set_xlabel("Voltage [V]"); ax.set_ylabel("Current [A]")
                 ax.legend(loc='best', frameon=True, fontsize=10)
                 ax.grid(axis='both', linestyle='--', color='lightgray', zorder=0)
-                ax.tick_params(direction='in', top=True, right=True, which='both')
-                
-                # I=0A, V=0Vの補助線を追加
-                ax.axhline(0, color='black', linestyle='-', linewidth=1.0, zorder=1) # I=0A の水平線
-                ax.axvline(0, color='black', linestyle='-', linewidth=1.0, zorder=1) # V=0V の垂直線
+                ax.axhline(0, color='black', linestyle='-', linewidth=1.0, zorder=1)
+                ax.axvline(0, color='black', linestyle='-', linewidth=1.0, zorder=1)
                 
                 st.pyplot(fig)
                 
@@ -765,7 +772,8 @@ def page_trouble_report():
                 if file_name.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
                     st.markdown("---")
                     st.markdown("**関連写真**")
-                    st.image(file_url, caption=file_name, use_column_width=True)
+                    # ★修正点: use_container_widthを削除し、width=400を設定
+                    st.image(file_url, caption=file_name, width=400)
                 else:
                     st.markdown(f"**関連ファイル:** [ファイルを開く]({file_url})", unsafe_allow_html=True)
             
