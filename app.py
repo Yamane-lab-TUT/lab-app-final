@@ -321,7 +321,7 @@ def page_note_list():
             if file_url:
                 if file_name and file_name.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
                     # 画像幅を400pxに制限
-                    st.image(file_url, caption=file_name, width=400)
+                    st.image(file_url, caption=file_name, width=700)
                 else:
                     st.markdown(f"**写真:** [ファイルを開く]({file_url})", unsafe_allow_html=True)
 
@@ -351,7 +351,7 @@ def page_note_list():
             if file_url:
                 if file_name and file_name.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
                     # 画像幅を400pxに制限
-                    st.image(file_url, caption=file_name, width=400)
+                    st.image(file_url, caption=file_name, width=700)
                 else:
                     st.markdown(f"**関連ファイル:** [ファイルを開く]({file_url})", unsafe_allow_html=True)
 
@@ -967,3 +967,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
