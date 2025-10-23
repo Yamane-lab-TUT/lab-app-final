@@ -618,6 +618,9 @@ def page_iv_analysis():
                 ax.legend(loc='best', frameon=True, fontsize=10)
                 ax.grid(axis='both', linestyle='--', color='lightgray', zorder=0)
                 ax.tick_params(direction='in', top=True, right=True, which='both')
+
+                ax.axhline(0, color='black', linestyle='-', linewidth=1.0, zorder=1) # I=0A の水平線
+                ax.axvline(0, color='black', linestyle='-', linewidth=1.0, zorder=1) # V=0V の垂直線
                 
                 st.pyplot(fig)
                 
@@ -658,6 +661,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
