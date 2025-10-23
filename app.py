@@ -1,9 +1,8 @@
 # --------------------------------------------------------------------------
 # Yamane Lab Convenience Tool - Streamlit Application
 #
-# v18.0:
-# - Added IV data analysis page with 0V/0A axes.
-# - Added Trouble Report archive page with structured reporting and in-page image display.
+# v18.1:
+# - Syntax error caused by unexpected HTML <br> tags in Python code fixed.
 # --------------------------------------------------------------------------
 
 import streamlit as st
@@ -50,9 +49,6 @@ def initialize_google_services():
             # 実際のアプリケーションではここに適切なエラー処理が必要
             st.error("❌ 致命的なエラー: Streamlit CloudのSecretsに `gcs_credentials` が見つかりません。")
             # デモ用にダミーの認証情報を設定（本番環境では削除）
-            creds_dict = {"type": "service_account", "project_id": "dummy-project", "private_key_id": "dummy", "private_key": "dummy", "client_email": "dummy@dummy.iam.gserviceaccount.com", "client_id": "dummy", "auth_uri": "dummy", "token_uri": "dummy", "auth_provider_x509_cert_url": "dummy", "client_x509_cert_url": "dummy"}
-            creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-            # ダミーのクライアントとサービスを返す (データ操作は失敗する)
             class DummyGSClient:
                 def open(self, name):
                     class DummyWorksheet:
@@ -167,7 +163,7 @@ def load_pl_data(uploaded_file):
         st.error(f"エラー：'{uploaded_file.name}'の読み込みに失敗しました。ファイル形式を確認してください。({e})")
         return None
 
-# --- IVデータ解析用ユーティリティ (追加) ---
+# --- IVデータ解析用ユーティリティ ---
 def load_iv_data(uploaded_file):
     """
     アップロードされたIV特性のtxtファイルを読み込み、Pandas DataFrameを返す関数。
@@ -337,12 +333,14 @@ def page_calendar():
             if not is_allday:
                 col3, col4 = st.columns(2)
                 start_time, end_time = col3.time_input("開始時刻 *", time(9, 0)), col4.time_input("終了時刻 *", time(10, 0))
-            event_location = st.text_input("場所"); event_description = st.text_area("説明")
+            event_location = st.text_input("場所")
+            event_description = st.text_area("説明")
             submitted = st.form_submit_button("カレンダーに追加")
             if submitted:
                 if not event_summary: 
                     st.error("件名は必須です。")
                 else:
+                    # ✅ 修正済み: <br> タグを削除し、正しいPython構文に修正
                     if is_allday: 
                         start, end = {'date': event_date.isoformat()}, {'date': (event_date + timedelta(days=1)).isoformat()}
                     else:
@@ -360,7 +358,9 @@ def page_calendar():
                         st.error(f"予定の追加に失敗しました: {e}")
 
 def page_minutes():
-    st.header("🎙️ 会議の議事録の管理"); minutes_sheet_name = '議事録_データ'<br>
+    st.header("🎙️ 会議の議事録の管理")
+    minutes_sheet_name = '議事録_データ'
+    
     tab1, tab2 = st.tabs(["議事録の確認", "新しい議事録の登録"])
     with tab1:
         df = get_sheet_as_df(gc, SPREADSHEET_NAME, minutes_sheet_name)
@@ -370,12 +370,17 @@ def page_minutes():
         selected_key = st.selectbox("議事録を選択", ["---"] + list(options.keys()))
         if selected_key != "---":
             row = df.loc[options[selected_key]]
-            st.subheader(row['会議タイトル']); st.caption(f"登録日時: {row['タイムスタンプ']}")
+            st.subheader(row['会議タイトル']) # ✅ 修正済み
+            st.caption(f"登録日時: {row['タイムスタンプ']}")
             if row.get('音声ファイルURL'): st.markdown(f"**[音声ファイルを開く]({row['音声ファイルURL']})** ({row.get('音声ファイル名', '')})")
-            st.markdown("---"); st.markdown(row['議事録内容'])
+            st.markdown("---") # ✅ 修正済み
+            st.markdown(row['議事録内容'])
+            
     with tab2:
         with st.form("minutes_form", clear_on_submit=True):
-            title = st.text_input("会議のタイトル *"); audio_file = st.file_uploader("音声ファイル (任意)", type=["mp3", "wav", "m4a"]); content = st.text_area("議事録内容", height=300)
+            title = st.text_input("会議のタイトル *")
+            audio_file = st.file_uploader("音声ファイル (任意)", type=["mp3", "wav", "m4a"])
+            content = st.text_area("議事録内容", height=300)
             submitted = st.form_submit_button("議事録を保存")
             if submitted:
                 if not title: st.error("タイトルは必須です。")
@@ -386,7 +391,8 @@ def page_minutes():
                     st.success("議事録を保存しました。"); st.cache_data.clear(); st.rerun()
 
 def page_qa():
-    st.header("💡 山根研 知恵袋"); qa_sheet_name, answers_sheet_name = '知恵袋_データ', '知恵袋_解答'
+    st.header("💡 山根研 知恵袋")
+    qa_sheet_name, answers_sheet_name = '知恵袋_データ', '知恵袋_解答'
     
     st.subheader("質問と回答を見る")
     df_qa = get_sheet_as_df(gc, SPREADSHEET_NAME, qa_sheet_name)
@@ -454,7 +460,8 @@ def page_qa():
             else: st.error("タイトルと内容は必須です。")
 
 def page_handover():
-    st.header("🔑 引き継ぎ情報の管理"); handover_sheet_name = '引き継ぎ_データ'
+    st.header("🔑 引き継ぎ情報の管理")
+    handover_sheet_name = '引き継ぎ_データ'
     tab1, tab2 = st.tabs(["情報の確認", "新しい情報の登録"])
     with tab1:
         df = get_sheet_as_df(gc, SPREADSHEET_NAME, handover_sheet_name)
@@ -611,7 +618,7 @@ def page_pl_analysis():
                 else:
                     st.warning("有効なデータファイルが見つかりませんでした。")
 
-# --- IVデータ解析ページ (追加) ---
+# --- IVデータ解析ページ ---
 def page_iv_analysis():
     st.header("⚡ IVデータ解析")
     st.write("複数の電流-電圧 (IV) 特性データをプロットし、結合したExcelファイルとしてダウンロードできます。")
@@ -675,7 +682,7 @@ def page_iv_analysis():
             else:
                 st.warning("有効なデータファイルが見つかりませんでした。")
 
-# --- トラブル報告ページ (追加) ---
+# --- トラブル報告ページ ---
 def page_trouble_report():
     st.header("🚨 トラブル報告・教訓アーカイブ")
     trouble_sheet_name = 'トラブル報告_データ'
@@ -691,7 +698,6 @@ def page_trouble_report():
             device = col1.selectbox("機器/場所", device_options)
             report_date = col2.date_input("発生日", datetime.today().date())
             
-            # st.session_state に項目を格納するために key を使用
             t_occur = st.text_area("1. トラブル発生時、何が起こったか？", key="t_occur_input", height=100)
             t_cause = st.text_area("2. 原因と究明プロセス", key="t_cause_input", height=100)
             t_solution = st.text_area("3. 対策と復旧プロセス", key="t_solution_input", height=100)
@@ -772,11 +778,10 @@ def page_trouble_report():
             st.markdown(row['再発防止策'])
 
 
-# --- Main App Logic (修正済み) ---
+# --- Main App Logic ---
 def main():
     st.title("🛠️ 山根研 便利屋さん")
     st.sidebar.header("メニュー")
-    # ↓↓↓↓ IVデータ解析とトラブル報告を追加 ↓↓↓↓
     menu = ["ノート記録", "ノート一覧", "カレンダー", "議事録管理", "山根研知恵袋", "引き継ぎ情報", "お問い合わせフォーム", "PLデータ解析", "IVデータ解析", "トラブル報告"]
     selected_page = st.sidebar.radio("機能を選択", menu)
 
@@ -790,10 +795,9 @@ def main():
         "お問い合わせフォーム": page_inquiry,
         "PLデータ解析": page_pl_analysis,
         "IVデータ解析": page_iv_analysis,
-        "トラブル報告": page_trouble_report, # ↓↓↓↓ ページ関数をマッピング ↓↓↓↓
+        "トラブル報告": page_trouble_report,
     }
     page_map[selected_page]()
 
 if __name__ == "__main__":
     main()
-
