@@ -1,11 +1,10 @@
 # --------------------------------------------------------------------------
 # Yamane Lab Convenience Tool - Streamlit Application
 #
-# v18.7:
-# - Added a new 'トラブル一覧' tab for quick overview of reports.
-# - Enabled multiple file uploads for new trouble reports.
-# - Updated archive viewing to display multiple attached files/images.
-# - Enhanced 'Other' device input handling.
+# v18.8:
+# - FIXED: "Other" device selection now correctly displays the text input field.
+# - ADDED: A mandatory "Subject/Title" field to the new trouble report form.
+# - UPDATED: The trouble list now uses the new "Subject/Title" for better overview.
 # --------------------------------------------------------------------------
 
 import streamlit as st
@@ -168,6 +167,7 @@ def upload_files_to_gcs(storage_client, bucket_name, file_uploader_obj_list, mem
 
         st.success(f"📄 {len(uploaded_data)}個のファイルをアップロードしました。")
         # スプレッドシートには、ファイル名とURLのリストをJSON文字列として保存する
+        # ★重要: スプレッドシートの列構成に合わせて、ファイル名とURLは元の形式（blob名と署名URL）でJSON化して保存する
         filenames_list = [item['blob'] for item in uploaded_data]
         urls_list = [item['url'] for item in uploaded_data]
         
@@ -744,7 +744,7 @@ def page_trouble_report():
     st.header("🚨 トラブル報告・教訓アーカイブ")
     trouble_sheet_name = 'トラブル報告_データ'
     
-    # ★修正箇所: タブの順序と名称を変更
+    # タブの順序と名称を変更
     tab1, tab2, tab3 = st.tabs(["トラブル一覧", "アーカイブを閲覧", "新規報告を登録"])
 
     # Load data once for all tabs
@@ -754,23 +754,35 @@ def page_trouble_report():
         df['タイムスタンプ_dt'] = pd.to_datetime(df['タイムスタンプ'], format="%Y%m%d_%H%M%S")
         df = df.sort_values(by='タイムスタンプ_dt', ascending=False)
     
-    # --- Tab 1: トラブル一覧 (New List View) ---
+    # --- Tab 1: トラブル一覧 (List View) ---
     with tab1:
         st.subheader("トラブル報告の概要一覧")
         if df.empty:
             st.info("まだトラブル報告は登録されていません。")
         else:
             list_df = df.copy()
-            # 報告タイトルの生成: [機器/場所] 発生日: トラブル発生時(冒頭40文字...)
+            
+            # ★修正箇所: 報告タイトルが存在しない場合は「トラブル発生時」の冒頭を使用
+            list_df['タイトル'] = list_df.apply(
+                lambda row: row.get('件名/タイトル') if row.get('件名/タイトル') else f"{row['トラブル発生時'][:30]}...", 
+                axis=1
+            )
+            
+            # 表示タイトル: [機器/場所] タイトル
             list_df['表示タイトル'] = list_df.apply(
-                lambda row: f"[{row['機器/場所']}] {row['発生日']}: {row['トラブル発生時'][:40]}" + ("..." if len(row['トラブル発生時']) > 40 else ""), 
+                lambda row: f"[{row['機器/場所']}] {row['タイトル']}", 
                 axis=1
             )
             
             st.dataframe(
-                list_df[['表示タイトル']], 
+                list_df[['発生日', '機器/場所', '表示タイトル', '報告者']], 
                 use_container_width=True,
-                column_config={"表示タイトル": st.column_config.TextColumn("トラブル一覧", help="詳細を見るには、隣の「アーカイブを閲覧」タブで選択してください。")}
+                column_config={
+                    "表示タイトル": st.column_config.TextColumn("件名/タイトル", help="詳細を見るには、隣の「アーカイブを閲覧」タブで選択してください。"),
+                    "発生日": "発生日",
+                    "機器/場所": "機器/場所",
+                    "報告者": "報告者"
+                }
             )
             st.info("詳細を見るには、隣の「アーカイブを閲覧」タブで、日付や機器・場所で絞り込んでください。")
 
@@ -789,56 +801,66 @@ def page_trouble_report():
             if device_filter != "すべて":
                 filtered_df = df[df['機器/場所'] == device_filter]
             
-            # Use a slightly more detailed format for the selection box
-            options = {f"[{row['機器/場所']}] {row['発生日']} - {row['トラブル発生時'][:20]}...": idx for idx, row in filtered_df.iterrows()}
+            # 選択ボックスの表示形式: [機器/場所] 発生日 - 件名/タイトル(冒頭20文字...)
+            options = {
+                f"[{row['機器/場所']}] {row['発生日']} - {row.get('件名/タイトル', row['トラブル発生時'])[:20]}...": idx 
+                for idx, row in filtered_df.iterrows()
+            }
             selected_key = st.selectbox("報告を選択", ["---"] + list(options.keys()), key="archive_selection")
 
             if selected_key != "---":
                 row = filtered_df.loc[options[selected_key]]
                 st.markdown("---")
-                st.title(f"🚨 {row['機器/場所']} トラブル報告")
+                
+                # ★修正箇所: タイトルが存在する場合はそれも表示
+                title = row.get('件名/タイトル', '件名なし')
+                st.title(f"🚨 {row['機器/場所']} - {title}")
+                
                 st.caption(f"発生日: {row['発生日']} | 報告者: {row['報告者'] or '匿名'}")
                 
-                # ★修正箇所: 複数ファイルの表示ロジック
+                # 複数ファイルの表示ロジック
                 file_urls_json = row.get('ファイルURL', '[]')
                 file_names_json = row.get('ファイル名', '[]')
                 
                 st.markdown("---")
                 st.markdown("### 関連ファイル")
 
+                urls, names = [], []
+                is_old_format = False
+                
                 try:
+                    # New multiple file JSON format
                     urls = json.loads(file_urls_json)
                     names = json.loads(file_names_json)
-                    
-                    if urls and names and len(urls) == len(names):
-                        st.info(f"{len(urls)}個のファイルが添付されています。")
-                        
-                        # Display images/links in up to 4 columns
-                        cols = st.columns(min(len(urls), 4)) 
-                        
-                        for i, (url, name) in enumerate(zip(urls, names)):
-                            with cols[i % 4]: 
-                                # Check if it's an image file by extension
-                                if name and name.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
-                                    st.image(url, caption=name, use_column_width=True)
-                                else:
-                                    # Use original file name for the link text
-                                    st.markdown(f"**ファイル {i+1}:** [🔗 {name.split('_')[-1]}]({url})", unsafe_allow_html=True)
-                    else:
-                        st.info("添付ファイルはありません。")
-
+                    if not isinstance(urls, list) or not urls: raise json.JSONDecodeError("Not a valid list", "", 0)
                 except json.JSONDecodeError:
                     # Old single-file format handling (for backward compatibility)
                     file_url = row.get('ファイルURL')
                     file_name = row.get('ファイル名')
                     if file_url:
-                        st.warning("この報告は旧形式のファイル形式で保存されています。")
-                        if file_name and file_name.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
-                            st.image(file_url, caption=file_name, width=400)
-                        else:
-                            st.markdown(f"**関連ファイル:** [ファイルを開く]({file_url})", unsafe_allow_html=True)
-                    else:
-                        st.info("添付ファイルはありません。")
+                        urls = [file_url]
+                        names = [file_name]
+                        is_old_format = True
+                
+                if urls and names and len(urls) == len(names):
+                    if is_old_format: st.warning("この報告は旧形式のファイル形式で保存されています。")
+                    st.info(f"{len(urls)}個のファイルが添付されています。")
+                    
+                    # Display images/links in up to 4 columns
+                    cols = st.columns(min(len(urls), 4)) 
+                    
+                    for i, (url, name) in enumerate(zip(urls, names)):
+                        with cols[i % 4]: 
+                            # Display friendly file name for new format (GCS blob name is used for 'name' in JSON)
+                            display_name = name.split('_')[-1] if not is_old_format else name
+                            
+                            # Check if it's an image file by extension
+                            if display_name and display_name.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
+                                st.image(url, caption=display_name, use_column_width=True)
+                            else:
+                                st.markdown(f"**ファイル {i+1}:** [🔗 {display_name}]({url})", unsafe_allow_html=True)
+                else:
+                    st.info("添付ファイルはありません。")
                 
                 st.markdown("---")
                 st.markdown("### 1. 発生時と初期対応")
@@ -854,11 +876,15 @@ def page_trouble_report():
                 st.markdown(row['再発防止策'])
 
 
-    # --- Tab 3: 新規報告を登録 (Multiple file upload) ---
+    # --- Tab 3: 新規報告を登録 (Multiple file upload, Title added) ---
     with tab3:
         st.subheader("新規トラブル報告を記録する")
         with st.form("trouble_report_form", clear_on_submit=True):
             st.write("--- 発生概要 ---")
+            
+            # ★修正箇所: タイトルフィールドを追加
+            report_title = st.text_input("件名/タイトル *")
+            
             col1, col2 = st.columns(2)
             
             device_options = ["MBE", "XRD", "PL", "IV", "ドラフター", "抵抗加熱蒸着", "RTA", "その他"]
@@ -867,18 +893,17 @@ def page_trouble_report():
             
             # ★修正箇所: 「その他」が選択された場合にテキスト入力欄を表示
             other_device = ""
+            device_to_save = device
             if device == "その他":
-                other_device = st.text_input("具体的な機器/場所を記入してください *")
+                # col1の中で直接入力フィールドを表示する
+                other_device = col1.text_input("具体的な機器/場所を記入してください *")
                 device_to_save = f"その他: {other_device}" if other_device else "その他"
-            else:
-                device_to_save = device
             
             t_occur = st.text_area("1. トラブル発生時、何が起こったか？", key="t_occur_input", height=100)
             t_cause = st.text_area("2. 原因と究明プロセス", key="t_cause_input", height=100)
             t_solution = st.text_area("3. 対策と復旧プロセス", key="t_solution_input", height=100)
             t_prevention = st.text_area("4. 再発防止策（教訓）", key="t_prevention_input", height=100)
             
-            # ★修正箇所: 複数ファイルアップロード
             uploaded_files = st.file_uploader("関連写真/ファイル（複数選択可）", type=["jpg", "jpeg", "png", "pdf", "txt"], accept_multiple_files=True)
             reporter_name = st.text_input("報告者名（任意）")
             
@@ -886,6 +911,9 @@ def page_trouble_report():
             
             if submitted:
                 # 必須項目のチェック
+                if not report_title:
+                    st.error("「件名/タイトル」は必須項目です。")
+                    st.stop()
                 if not t_occur or not t_cause or not t_solution:
                     st.error("「発生時」「原因」「対策」は必須項目です。")
                     st.stop()
@@ -895,14 +923,16 @@ def page_trouble_report():
                     st.error("「その他」を選択した場合は、具体的な機器/場所を記入してください。")
                     st.stop()
                 
-                # ★修正箇所: 複数ファイルアップロード関数の呼び出し
+                # 複数ファイルアップロード
                 filenames_json, urls_json = upload_files_to_gcs(storage_client, CLOUD_STORAGE_BUCKET_NAME, uploaded_files, device_to_save)
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 
+                # スプレッドシートの列構成: 
+                # タイムスタンプ, 機器/場所, 発生日, トラブル発生時, 原因/究明, 対策/復旧, 再発防止策, 報告者, ファイル名, ファイルURL, 件名/タイトル
                 row_data = [
                     timestamp, device_to_save, report_date.isoformat(), t_occur,
                     t_cause, t_solution, t_prevention,
-                    reporter_name, filenames_json, urls_json # JSON文字列として保存
+                    reporter_name, filenames_json, urls_json, report_title # JSON文字列として保存
                 ]
                 
                 try:
