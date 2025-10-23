@@ -340,16 +340,24 @@ def page_calendar():
             event_location = st.text_input("場所"); event_description = st.text_area("説明")
             submitted = st.form_submit_button("カレンダーに追加")
             if submitted:
-                if not event_summary: st.error("件名は必須です。")
+                if not event_summary: 
+                    st.error("件名は必須です。")
                 else:
-                    if is_allday: start, end = {'date': event_date.isoformat()}, {'date': (event_date + timedelta(days=1)).isoformat()}<br>
-                    else:<br>
-                        tz = "Asia/Tokyo"; start = {'dateTime': datetime.combine(event_date, start_time).isoformat(), 'timeZone': tz}; end = {'dateTime': datetime.combine(event_date, end_time).isoformat(), 'timeZone': tz}<br>
-                    event_body = {'summary': event_summary, 'location': event_location, 'description': event_description, 'start': start, 'end': end}<br>
-                    try:<br>
-                        created_event = calendar_service.events().insert(calendarId=DEFAULT_CALENDAR_ID, body=event_body).execute()<br>
-                        st.success(f"予定「{created_event.get('summary')}」を追加しました。"); st.markdown(f"[カレンダーで確認]({created_event.get('htmlLink')})")<br>
-                    except exceptions.GoogleAPIError as e: st.error(f"予定の追加に失敗しました: {e}")
+                    if is_allday: 
+                        start, end = {'date': event_date.isoformat()}, {'date': (event_date + timedelta(days=1)).isoformat()}
+                    else:
+                        tz = "Asia/Tokyo"
+                        start = {'dateTime': datetime.combine(event_date, start_time).isoformat(), 'timeZone': tz}
+                        end = {'dateTime': datetime.combine(event_date, end_time).isoformat(), 'timeZone': tz}
+                        
+                    event_body = {'summary': event_summary, 'location': event_location, 'description': event_description, 'start': start, 'end': end}
+                    
+                    try:
+                        created_event = calendar_service.events().insert(calendarId=DEFAULT_CALENDAR_ID, body=event_body).execute()
+                        st.success(f"予定「{created_event.get('summary')}」を追加しました。")
+                        st.markdown(f"[カレンダーで確認]({created_event.get('htmlLink')})")
+                    except exceptions.GoogleAPIError as e: 
+                        st.error(f"予定の追加に失敗しました: {e}")
 
 def page_minutes():
     st.header("🎙️ 会議の議事録の管理"); minutes_sheet_name = '議事録_データ'<br>
@@ -788,3 +796,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
