@@ -1,9 +1,9 @@
 # --------------------------------------------------------------------------
 # Yamane Lab Convenience Tool - Streamlit Application (app.py)
 #
-# v20.0.0 (全シート構造完全対応 & IV高速化・安定化版)
-# - お客様の全アップロードデータに基づき、ヘッダー名とシート名を確定。
-# - 全ての記録・一覧ページ（エピノート、メンテノート、トラブル報告、議事録、知恵袋、引き継ぎ、問い合わせ）を実装。
+# v20.4.0 (認証・キャッシュエラー修正版)
+# - FIX: 認証文字列のJSONパース処理を強化 (v20.3.0)
+# - FIX: get_sheet_as_dfのキャッシュエラー (UnhashableParamError) を修正
 # --------------------------------------------------------------------------
 
 import streamlit as st
@@ -40,7 +40,6 @@ SPREADSHEET_NAME = 'エピノート' # Google Spreadsheetのファイル名
 
 # --- SPREADSHEET COLUMN HEADERS (お客様のデータ構造に完全一致) ---
 
-# --- エピノート_データ
 SHEET_EPI_DATA = 'エピノート_データ'
 EPI_COL_TIMESTAMP = 'タイムスタンプ'
 EPI_COL_NOTE_TYPE = 'ノート種別'   # 'エピノート'
@@ -49,7 +48,6 @@ EPI_COL_MEMO = 'メモ'           # タイトルと詳細メモを含む
 EPI_COL_FILENAME = 'ファイル名'
 EPI_COL_FILE_URL = '写真URL'
 
-# --- メンテノート_データ
 SHEET_MAINTE_DATA = 'メンテノート_データ'
 MAINT_COL_TIMESTAMP = 'タイムスタンプ'
 MAINT_COL_NOTE_TYPE = 'ノート種別' # 'メンテノート'
@@ -57,7 +55,6 @@ MAINT_COL_MEMO = 'メモ'
 MAINT_COL_FILENAME = 'ファイル名'
 MAINT_COL_FILE_URL = '写真URL'
 
-# --- 議事録_データ
 SHEET_MEETING_DATA = '議事録_データ'
 MEETING_COL_TIMESTAMP = 'タイムスタンプ'
 MEETING_COL_TITLE = '会議タイトル'
@@ -65,14 +62,12 @@ MEETING_COL_AUDIO_NAME = '音声ファイル名'
 MEETING_COL_AUDIO_URL = '音声ファイルURL'
 MEETING_COL_CONTENT = '議事録内容'
 
-# --- 引き継ぎ_データ
 SHEET_HANDOVER_DATA = '引き継ぎ_データ'
 HANDOVER_COL_TIMESTAMP = 'タイムスタンプ'
 HANDOVER_COL_TYPE = '種類'
 HANDOVER_COL_TITLE = 'タイトル'
 HANDOVER_COL_MEMO = 'メモ' # 内容1,2,3はUIを複雑にするため、一旦メモに統合
 
-# --- 知恵袋_データ (質問)
 SHEET_QA_DATA = '知恵袋_データ'
 QA_COL_TIMESTAMP = 'タイムスタンプ'
 QA_COL_TITLE = '質問タイトル'
@@ -83,14 +78,12 @@ QA_COL_FILE_URL = '添付ファイルURL'
 QA_COL_STATUS = 'ステータス'
 SHEET_QA_ANSWER = '知恵袋_解答' # 解答シート
 
-# --- お問い合わせ_データ
 SHEET_CONTACT_DATA = 'お問い合わせ_データ'
 CONTACT_COL_TIMESTAMP = 'タイムスタンプ'
 CONTACT_COL_TYPE = 'お問い合わせの種類'
 CONTACT_COL_DETAIL = '詳細内容'
 CONTACT_COL_CONTACT = '連絡先'
 
-# --- トラブル報告_データ
 SHEET_TROUBLE_DATA = 'トラブル報告_データ'
 TROUBLE_COL_TIMESTAMP = 'タイムスタンプ'
 TROUBLE_COL_DEVICE = '機器/場所'
@@ -125,9 +118,9 @@ class DummyStorageClient:
     def get_bucket(self, name): return self
     def list_blobs(self, **kwargs): return []
 
-# ダミーカレンダーサービスは使用しないため削除
-# app.py の initialize_google_services 関数部分のみ
-# ... (省略) ...
+# gc と storage_client はグローバルで定義（Dummyオブジェクトで初期化）
+gc = DummyGSClient()
+storage_client = DummyStorageClient()
 
 @st.cache_resource(ttl=3600)
 def initialize_google_services():
@@ -143,14 +136,12 @@ def initialize_google_services():
         # 1. 冒頭と末尾の不要な空白（改行、タブなど）を除去
         cleaned_string = raw_credentials_string.strip()
         
-        # 2. JSON内部の改行とタブ文字を完全に除去し、JSON全体を一行にする
+        # 2. JSON内部の改行とタブ文字、全角スペースと誤認されやすい文字を完全に除去
         # これにより、三重引用符内のインデントや改行によるパースエラーをほぼ確実に排除します。
-        # ただし、private_key内のエスケープされた改行(\\n)は保持される必要があります。
-        
-        # JSON外の改行・タブ・全角スペースを除去
         cleaned_string = cleaned_string.replace('\n', '')
         cleaned_string = cleaned_string.replace('\t', '')
-        cleaned_string = cleaned_string.replace(' ', '') # U+00A0: NO-BREAK SPACE (全角スペースと誤認されやすい文字)
+        # U+00A0: NO-BREAK SPACE (全角スペースと誤認されやすい文字)を除去
+        cleaned_string = cleaned_string.replace(' ', '') 
         
         # 最後に連続するスペースを一つに置換 (JSONの構造を壊さない範囲で)
         cleaned_string = re.sub(r'(\s){2,}', r'\1', cleaned_string)
@@ -159,17 +150,17 @@ def initialize_google_services():
         info = json.loads(cleaned_string) 
         
         # gspread (Spreadsheet) の認証
-        gc = gspread.service_account_from_dict(info)
+        gc_real = gspread.service_account_from_dict(info)
 
         # google.cloud.storage (GCS) の認証
-        storage_client = storage.Client.from_service_account_info(info)
+        storage_client_real = storage.Client.from_service_account_info(info)
 
         st.sidebar.success("✅ Googleサービス認証成功")
-        return gc, storage_client
+        return gc_real, storage_client_real
 
     except json.JSONDecodeError as e:
         # JSONパースエラーが発生した場合
-        st.error(f"❌ 認証エラー（JSON形式不正）: サービスアカウントのJSON形式が不正です。改行やタブ文字、不要なスペースが含まれていないか確認してください。エラー詳細: {e}")
+        st.error(f"❌ 認証エラー（JSON形式不正）: サービスアカウントのJSON形式が不正です。secrets.toml の値が、正しいJSON文字列であることを確認してください。エラー詳細: {e}")
         return DummyGSClient(), DummyStorageClient()
         
     except Exception as e:
@@ -177,38 +168,40 @@ def initialize_google_services():
         st.error(f"❌ 認証エラー: サービスアカウントの初期化に失敗しました。認証情報をご確認ください。({e})")
         return DummyGSClient(), DummyStorageClient()
 
-# ... (省略) ...
-# Calendar Serviceは使わないため、戻り値を調整
+# グローバル変数を初期化されたクライアントに更新
 gc, storage_client = initialize_google_services() 
 
 # --------------------------------------------------------------------------
 # --- Data Utilities (データ取得・解析) ---
 # --------------------------------------------------------------------------
 
-# app.py の get_sheet_as_df 関数を修正
-# gc (gspreadクライアント)を引数から削除し、グローバル変数として利用する
-
+# ★★★ 修正箇所: get_sheet_as_df から gc を引数として削除 ★★★
 @st.cache_data(ttl=600, show_spinner="スプレッドシートからデータを読み込み中...")
-def get_sheet_as_df(spreadsheet_name, sheet_name): # <-- (1) gc を引数から削除
+def get_sheet_as_df(spreadsheet_name, sheet_name):
     """指定されたシートのデータをDataFrameとして取得する"""
+    global gc # グローバルな gc オブジェクトを利用
     
-    # (2) グローバルな gc オブジェクトを利用
-    global gc 
-
     if isinstance(gc, DummyGSClient):
         return pd.DataFrame()
     
     try:
-        # worksheet.get_all_values() は、gcオブジェクトの内部状態に依存しないため、
-        # gc自体をキャッシュキーに含める必要はありません。
         worksheet = gc.open(spreadsheet_name).worksheet(sheet_name)
         data = worksheet.get_all_values()
+        if not data or len(data) <= 1: # ヘッダーのみの場合も空とみなす
+            return pd.DataFrame(columns=data[0] if data else [])
         
-        # ... (後略 - 内部ロジックは変更なし)
-        # ...
+        # 1行目をヘッダーとしてDataFrameを作成
+        df = pd.DataFrame(data[1:], columns=data[0])
+        return df
+
+    except gspread.exceptions.WorksheetNotFound:
+        st.error(f"シート名「{sheet_name}」が見つかりません。スプレッドシートをご確認ください。")
+        return pd.DataFrame()
+    except Exception as e:
+        st.warning(f"警告：シート「{sheet_name}」の読み込み中にエラーが発生しました。ヘッダーの不一致やデータ形式を確認してください。({e})")
+        return pd.DataFrame()
 
 # --- IVデータ解析用ユーティリティ (キャッシュで高速化) ---
-# (前回のコードから変更なし)
 @st.cache_data(show_spinner="IVデータを解析中...", max_entries=50)
 def load_iv_data(uploaded_file_bytes, uploaded_file_name):
     """アップロードされたIVファイルを読み込み、DataFrameを返す"""
@@ -292,7 +285,6 @@ def upload_file_to_gcs(storage_client, file_obj, folder_name):
         blob.upload_from_file(file_obj, content_type=file_obj.type)
 
         # 署名付きURLではなく、よりシンプルな公開URLを生成（バケットの権限設定に依存）
-        # ユーザーの既存データが使用している形式に合わせます
         public_url = f"https://storage.googleapis.com/{CLOUD_STORAGE_BUCKET_NAME}/{url_quote(gcs_filename)}"
         
         return original_filename, public_url
@@ -300,7 +292,7 @@ def upload_file_to_gcs(storage_client, file_obj, folder_name):
     except Exception as e:
         st.error(f"❌ GCSエラー: ファイルのアップロード中にエラーが発生しました。バケット名 '{CLOUD_STORAGE_BUCKET_NAME}' が正しいか、権限があるか確認してください。({e})")
         return None, None
-
+        
 # --------------------------------------------------------------------------
 # --- Page Implementations (各機能ページ) ---
 # --------------------------------------------------------------------------
@@ -310,7 +302,9 @@ def page_data_list(sheet_name, title, col_time, col_filter=None, col_memo=None, 
     """汎用的なデータ一覧ページ"""
     
     st.header(title)
-    df = get_sheet_as_df(SPREADSHEET_NAME, sheet_name)
+    # ★★★ 修正箇所: get_sheet_as_df の呼び出しから gc の引数を削除 ★★★
+    df = get_sheet_as_df(SPREADSHEET_NAME, sheet_name) 
+
     if df.empty: st.info("データがありません。"); return
         
     st.subheader("絞り込みと検索")
@@ -388,13 +382,13 @@ def page_data_list(sheet_name, title, col_time, col_filter=None, col_memo=None, 
             st.markdown("##### 添付ファイル")
             
             try:
-                # ファイル名とURLがJSONリストとして保存されている場合（標準的な書き込み形式）
+                # JSONデコードを試みる
                 urls = json.loads(row[col_url])
-                filenames = json.loads(row[EPI_COL_FILENAME]) if EPI_COL_FILENAME in row else ['ファイル'] * len(urls)
+                filenames = json.loads(row[EPI_COL_FILENAME]) if EPI_COL_FILENAME in row and row[EPI_COL_FILENAME] else ['ファイル'] * len(urls)
                 
                 if urls:
+                    # リストとして処理
                     for filename, url in zip(filenames, urls):
-                        # URLの末尾がGoogle Driveの場合は別表示
                         if "drive.google.com" in url:
                             st.markdown(f"- **Google Drive:** [{filename}](<{url}>)")
                         else:
@@ -403,9 +397,14 @@ def page_data_list(sheet_name, title, col_time, col_filter=None, col_memo=None, 
                     st.info("添付ファイルはありません。")
 
             except Exception:
-                # JSON形式ではない場合（古いデータや手動入力）
+                # JSON形式ではない場合（古いデータや手動入力、単一URLの直接保存）
                 if pd.notna(row[col_url]) and row[col_url]:
-                    st.markdown(f"- [添付ファイルURL]({row[col_url]})")
+                    # 単一のURLまたはカンマ区切りのURLとして扱う
+                    url_list = row[col_url].split(',')
+                    for url in url_list:
+                         url = url.strip().strip('"') # 余計な空白や引用符を除去
+                         if url:
+                             st.markdown(f"- [添付ファイルURL]({url})")
                 else:
                     st.info("添付ファイルはありません。")
 
@@ -417,7 +416,6 @@ def page_epi_note_recording():
     
     with st.form(key='epi_note_form'):
         
-        # ユーザーの既存データ構造: カテゴリ(エピ番号), メモ(タイトル+詳細)
         col1, col2 = st.columns(2)
         with col1:
             ep_category = st.text_input(f"{EPI_COL_CATEGORY} (例: D1, 784-A)", key='ep_category_input')
@@ -448,7 +446,6 @@ def page_epi_note_recording():
         urls_json = json.dumps(urls_list)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # 実際のシートの列にデータをマッピング: ['タイムスタンプ', 'ノート種別', 'カテゴリ', 'メモ', 'ファイル名', '写真URL']
         memo_content = f"{ep_title}\n{ep_memo}"
         row_data = [
             timestamp, EPI_COL_NOTE_TYPE, ep_category, 
@@ -463,7 +460,6 @@ def page_epi_note_recording():
             st.error(f"データの書き込み中にエラーが発生しました。シート名 '{SHEET_EPI_DATA}' が存在するか確認してください。")
 
 def page_epi_note_list():
-    # 表示項目: タイムスタンプ, ノート種別, カテゴリ, メモ, ファイル名, 写真URL
     detail_cols = [EPI_COL_TIMESTAMP, EPI_COL_CATEGORY, EPI_COL_NOTE_TYPE, EPI_COL_MEMO, EPI_COL_FILENAME]
     page_data_list(
         sheet_name=SHEET_EPI_DATA,
@@ -509,7 +505,6 @@ def page_mainte_recording():
         urls_json = json.dumps(urls_list)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        # 実際のシートの列にデータをマッピング: ['タイムスタンプ', 'ノート種別', 'メモ', 'ファイル名', '写真URL']
         memo_to_save = f"[{mainte_type}] {memo_content}"
         row_data = [
             timestamp, MAINT_COL_NOTE_TYPE, memo_to_save, 
@@ -524,13 +519,12 @@ def page_mainte_recording():
             st.error(f"データの書き込み中にエラーが発生しました。シート名 '{SHEET_MAINTE_DATA}' が存在するか確認してください。")
 
 def page_mainte_list():
-    # 表示項目: タイムスタンプ, ノート種別, メモ, ファイル名, 写真URL
     detail_cols = [MAINT_COL_TIMESTAMP, MAINT_COL_NOTE_TYPE, MAINT_COL_MEMO, MAINT_COL_FILENAME]
     page_data_list(
         sheet_name=SHEET_MAINTE_DATA,
         title="🛠️ メンテノート一覧",
         col_time=MAINT_COL_TIMESTAMP,
-        col_filter=MAINT_COL_NOTE_TYPE, # 種類で絞り込み
+        col_filter=MAINT_COL_NOTE_TYPE, 
         col_memo=MAINT_COL_MEMO,
         col_url=MAINT_COL_FILE_URL,
         detail_cols=detail_cols
@@ -560,7 +554,6 @@ def page_meeting_recording():
             
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # ['タイムスタンプ', '会議タイトル', '音声ファイル名', '音声ファイルURL', '議事録内容']
         row_data = [
             timestamp, meeting_title, audio_name, 
             audio_url, meeting_content
@@ -574,7 +567,6 @@ def page_meeting_recording():
             st.error(f"データの書き込み中にエラーが発生しました。シート名 '{SHEET_MEETING_DATA}' が存在するか確認してください。")
 
 def page_meeting_list():
-    # 表示項目: タイムスタンプ, 会議タイトル, 音声ファイル名, 音声ファイルURL, 議事録内容
     detail_cols = [MEETING_COL_TIMESTAMP, MEETING_COL_TITLE, MEETING_COL_CONTENT, MEETING_COL_AUDIO_NAME, MEETING_COL_AUDIO_URL]
     page_data_list(
         sheet_name=SHEET_MEETING_DATA,
@@ -621,7 +613,6 @@ def page_qa_recording():
         urls_json = json.dumps(urls_list)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        # ['タイムスタンプ', '質問タイトル', '質問内容', '連絡先メールアドレス', '添付ファイル名', '添付ファイルURL', 'ステータス']
         row_data = [
             timestamp, qa_title, qa_content, qa_contact, 
             filenames_json, urls_json, "未解決" # 初期ステータス
@@ -635,13 +626,12 @@ def page_qa_recording():
             st.error(f"データの書き込み中にエラーが発生しました。シート名 '{SHEET_QA_DATA}' が存在するか確認してください。")
 
 def page_qa_list():
-    # 表示項目: タイムスタンプ, 質問タイトル, 質問内容, 連絡先メールアドレス, 添付ファイル名, 添付ファイルURL, ステータス
     detail_cols = [QA_COL_TIMESTAMP, QA_COL_TITLE, QA_COL_CONTENT, QA_COL_CONTACT, QA_COL_STATUS, QA_COL_FILENAME]
     page_data_list(
         sheet_name=SHEET_QA_DATA,
         title="💡 知恵袋・質問箱 (質問一覧)",
         col_time=QA_COL_TIMESTAMP,
-        col_filter=QA_COL_STATUS, # ステータスで絞り込み
+        col_filter=QA_COL_STATUS, 
         col_memo=QA_COL_CONTENT,
         col_url=QA_COL_FILE_URL,
         detail_cols=detail_cols
@@ -670,7 +660,7 @@ def page_handover_recording():
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
         # ユーザーのシート構造: ['タイムスタンプ', '種類', 'タイトル', '内容1', '内容2', '内容3', 'メモ']
-        # 暫定的に「内容1」に詳細メモを、「内容2」「内容3」は空で保存します。
+        # 既存のデータと整合性を保つため、「内容1」に詳細メモを入れます。
         row_data = [
             timestamp, handover_type, handover_title, 
             handover_memo, "", "", ""
@@ -684,7 +674,6 @@ def page_handover_recording():
             st.error(f"データの書き込み中にエラーが発生しました。シート名 '{SHEET_HANDOVER_DATA}' が存在するか確認してください。")
 
 def page_handover_list():
-    # 表示項目: タイムスタンプ, 種類, タイトル, 内容1, 内容2, 内容3, メモ
     detail_cols = [HANDOVER_COL_TIMESTAMP, HANDOVER_COL_TYPE, HANDOVER_COL_TITLE, '内容1', '内容2', '内容3', HANDOVER_COL_MEMO]
     page_data_list(
         sheet_name=SHEET_HANDOVER_DATA,
@@ -717,7 +706,6 @@ def page_contact_recording():
             
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # ['タイムスタンプ', 'お問い合わせの種類', '詳細内容', '連絡先']
         row_data = [
             timestamp, contact_type, contact_detail, contact_info
         ]
@@ -730,7 +718,6 @@ def page_contact_recording():
             st.error(f"データの書き込み中にエラーが発生しました。シート名 '{SHEET_CONTACT_DATA}' が存在するか確認してください。")
 
 def page_contact_list():
-    # 表示項目: タイムスタンプ, お問い合わせの種類, 詳細内容, 連絡先
     detail_cols = [CONTACT_COL_TIMESTAMP, CONTACT_COL_TYPE, CONTACT_COL_DETAIL, CONTACT_COL_CONTACT]
     page_data_list(
         sheet_name=SHEET_CONTACT_DATA,
@@ -790,7 +777,6 @@ def page_trouble_recording():
         urls_json = json.dumps(urls_list)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        # ['タイムスタンプ', '機器/場所', '発生日', 'トラブル発生時', '原因/究明', '対策/復旧', '再発防止策', '報告者', 'ファイル名', 'ファイルURL', '件名/タイトル']
         row_data = [
             timestamp, device_to_save, report_date.isoformat(), occur_time,
             cause, solution, prevention, reporter_name,
@@ -805,7 +791,6 @@ def page_trouble_recording():
             st.error(f"データの書き込み中にエラーが発生しました。シート名 '{SHEET_TROUBLE_DATA}' が存在するか確認してください。")
 
 def page_trouble_list():
-    # 表示項目: タイムスタンプ, 機器/場所, 発生日, トラブル発生時, 原因/究明, 対策/復旧, 再発防止策, 報告者, ファイル名, ファイルURL, 件名/タイトル
     detail_cols = [
         TROUBLE_COL_TIMESTAMP, TROUBLE_COL_TITLE, TROUBLE_COL_DEVICE, TROUBLE_COL_OCCUR_DATE, 
         TROUBLE_COL_OCCUR_TIME, TROUBLE_COL_CAUSE, TROUBLE_COL_SOLUTION, TROUBLE_COL_PREVENTION, 
@@ -822,7 +807,7 @@ def page_trouble_list():
     )
 
 
-# --- 8. IVデータ解析 (前回と同じく再利用) ---
+# --- 8. IVデータ解析 ---
 def page_iv_analysis():
     """⚡ IVデータ解析ページ（キャッシュ適用済み）"""
     st.header("⚡ IVデータ解析")
@@ -927,6 +912,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
