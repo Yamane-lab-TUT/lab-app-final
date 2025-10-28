@@ -233,76 +233,43 @@ def load_data_file(uploaded_bytes, uploaded_filename):
 @st.cache_data(show_spinner="PLデータを解析中...", max_entries=128)
 def load_pl_data(uploaded_file):
     """
-    アップロードされたtxtファイルを読み込み、DataFrame(pixel,intensity) を返す。
-    - uploaded_file: Streamlit UploadedFile OR bytes OR file-like
-    - 柔軟に区切り文字を判別し、先頭のコメント/ヘッダ行を自動でスキップします。
+    PLデータを安全に読み込む関数。
+    コメント行（#, !, /）をスキップし、2列データを返す。
+    カンマ・タブ・空白など複数区切りに対応。
     """
     try:
-        # 1) バイト列を取得（UploadedFile なら getvalue()）
-        if hasattr(uploaded_file, "getvalue"):
-            raw = uploaded_file.getvalue()
-        elif isinstance(uploaded_file, (bytes, bytearray)):
-            raw = bytes(uploaded_file)
-        else:
-            # file-like object?
-            try:
-                raw = uploaded_file.read()
-            except Exception:
-                raw = None
+        # ファイル内容を文字列に変換
+        content = uploaded_file.getvalue().decode('utf-8', errors='ignore').splitlines()
 
-        if not raw:
-            st.warning(f"警告：'{getattr(uploaded_file, 'name', 'file')}' の内容が空です。")
-            return None
-
-        # 2) テキストに変換（失敗しても ignore で行を保持）
-        try:
-            text_lines = raw.decode('utf-8', errors='ignore').splitlines()
-        except Exception:
-            text_lines = str(raw).splitlines()
-
-        # 3) データ開始行を検出（先頭から最初に "数値が含まれる行" を開始行とする）
-        data_start = None
-        for i, line in enumerate(text_lines):
+        # コメント行を除外し、最初の数値行を探す
+        data_lines = []
+        for line in content:
             s = line.strip()
-            if not s:
+            if not s or s.startswith(('#', '!', '/')):
                 continue
-            # 行内に2つ以上の数値トークンがあればデータ行とみなす
-            tokens = re.split(r'[\s,]+', s)
-            num_count = 0
-            for tok in tokens:
-                if re.match(r'^[\+\-]?\d*\.?\d+(?:[eE][\+\-]?\d+)?$', tok):
-                    num_count += 1
-            if num_count >= 2:
-                data_start = i
-                break
-        if data_start is None:
-            st.warning(f"警告：'{getattr(uploaded_file, 'name', 'file')}' にデータ行が見つかりません。")
+            data_lines.append(s)
+
+        if not data_lines:
+            st.warning(f"'{uploaded_file.name}' に有効なデータ行がありません。")
             return None
 
-        # 4) pandas で読み込む（区切りは空白/タブ/カンマを許容）
-        data_block = "\n".join(text_lines[data_start:])
-        df = pd.read_csv(io.StringIO(data_block), sep=r'\s+|,|\t', engine='python', header=None)
+        # pandasで読み込み（区切りはカンマ・空白・タブ対応）
+        df = pd.read_csv(io.StringIO("\n".join(data_lines)),
+                         sep=r'\s+|,|\t', engine='python', header=None, names=['pixel', 'intensity'])
 
-        # 5) 最低2列を取り出す
-        if df.shape[1] < 2:
-            st.warning(f"警告：'{getattr(uploaded_file, 'name', 'file')}' の列数が2未満です。")
-            return None
-        df = df.iloc[:, :2].copy()
-        df.columns = ['pixel', 'intensity']
-
-        # 6) 型変換とクリーニング
+        # 数値変換＋NaN除去
         df['pixel'] = pd.to_numeric(df['pixel'], errors='coerce')
         df['intensity'] = pd.to_numeric(df['intensity'], errors='coerce')
-        df = df.dropna().reset_index(drop=True)
+        df.dropna(inplace=True)
 
         if df.empty:
-            st.warning(f"警告：'{getattr(uploaded_file, 'name', 'file')}' に有効なデータが含まれていません。")
+            st.warning(f"'{uploaded_file.name}' に有効な数値データが見つかりません。")
             return None
 
         return df
 
     except Exception as e:
-        st.error(f"エラー：'{getattr(uploaded_file, 'name', 'file')}' の読み込みに失敗しました。({e})")
+        st.error(f"エラー：'{uploaded_file.name}' の読み込みに失敗しました。({e})")
         return None
 
 
@@ -1172,6 +1139,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
