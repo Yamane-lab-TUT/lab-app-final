@@ -424,13 +424,6 @@ def display_attached_files(row_dict, col_url_key, col_filename_key=None):
         st.error(f"添付ファイルの表示に失敗しました: {e}")
 
 # -*- coding: utf-8 -*-
-"""
-bennriyasann3_fixed_v2_part2.py
-Yamane Lab Convenience Tool - 修正版パート2（ページ実装・ルーティング）
-
-前半（part1）で定義したユーティリティ群をインポートして使用する想定です。
-同じディレクトリに part1 を置くか、part1 の内容を上部に結合して実行してください。
-"""
 
 import streamlit as st
 import pandas as pd
@@ -1179,5 +1172,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
