@@ -34,34 +34,20 @@ except ImportError:
 import calendar
 import matplotlib.font_manager as fm # <--- fmのインポートは既にあり
 
-# --- Matplotlib 日本語フォント設定 ---
+# app.py (import文の直後あたりに追記)
+
+# ... (前略)
+
+# --- Matplotlib 日本語フォント設定（packages.txt利用時） ---
 try:
-    # 既存の日本語フォントリスト
-    jp_fonts = ['Hiragino Maru Gothic Pro', 'Yu Gothic', 'Meiryo', 'TakaoGothic', 'IPAexGothic', 'IPAfont', 'Noto Sans CJK JP']
-    
-    # 環境内で利用可能なフォントを検索
-    available_fonts = [f.name for f in fm.fontManager.ttflist]
-    
-    # 利用可能なフォントを優先的に設定
-    found_fonts = [font for font in jp_fonts if font in available_fonts]
-    
-    if found_fonts:
-        plt.rcParams['font.family'] = 'sans-serif'
-        plt.rcParams['font.sans-serif'] = found_fonts
-    else:
-        # 見つからない場合は警告を出し、デフォルトの英語フォントを使用（□□を避ける）
-        st.sidebar.warning("⚠️ 日本語フォントが見つかりませんでした。グラフの日本語表示が□□になる可能性があります。")
-        # デフォルト設定に戻すことでエラーを回避
-        plt.rcParams['font.family'] = 'sans-serif'
-    
+    # Noto Sans CJK JPがインストールされていることを期待
+    plt.rcParams['font.family'] = 'sans-serif'
+    plt.rcParams['font.sans-serif'] = ['Noto Sans CJK JP', 'sans-serif']
     plt.rcParams['axes.unicode_minus'] = False
+    st.info("✅ Matplotlib: 'Noto Sans CJK JP' を設定しました。")
+
 except Exception as e:
-    # 致命的なエラーを避けるために例外をキャッチ
-    st.sidebar.error(f"❌ フォント設定中にエラーが発生しました: {e}")
-    pass
-    
-# --- Global Configuration & Setup ---
-# ...
+    st.error(f"❌ フォント設定中に予期せぬエラーが発生しました: {e}")
     
 # --- Global Configuration & Setup ---
 st.set_page_config(page_title="山根研 便利屋さん", layout="wide")
@@ -1177,4 +1163,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
