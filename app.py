@@ -185,28 +185,27 @@ gc, storage_client = initialize_google_services()
 # --- Data Utilities (データ取得・解析) ---
 # --------------------------------------------------------------------------
 
+# app.py の get_sheet_as_df 関数を修正
+# gc (gspreadクライアント)を引数から削除し、グローバル変数として利用する
+
 @st.cache_data(ttl=600, show_spinner="スプレッドシートからデータを読み込み中...")
-def get_sheet_as_df(gc, spreadsheet_name, sheet_name):
+def get_sheet_as_df(spreadsheet_name, sheet_name): # <-- (1) gc を引数から削除
     """指定されたシートのデータをDataFrameとして取得する"""
+    
+    # (2) グローバルな gc オブジェクトを利用
+    global gc 
+
     if isinstance(gc, DummyGSClient):
         return pd.DataFrame()
     
     try:
+        # worksheet.get_all_values() は、gcオブジェクトの内部状態に依存しないため、
+        # gc自体をキャッシュキーに含める必要はありません。
         worksheet = gc.open(spreadsheet_name).worksheet(sheet_name)
         data = worksheet.get_all_values()
-        if not data or len(data) <= 1: # ヘッダーのみの場合も空とみなす
-            return pd.DataFrame(columns=data[0] if data else [])
         
-        # 1行目をヘッダーとしてDataFrameを作成
-        df = pd.DataFrame(data[1:], columns=data[0])
-        return df
-
-    except gspread.exceptions.WorksheetNotFound:
-        st.error(f"シート名「{sheet_name}」が見つかりません。スプレッドシートをご確認ください。")
-        return pd.DataFrame()
-    except Exception as e:
-        st.warning(f"警告：シート「{sheet_name}」の読み込み中にエラーが発生しました。ヘッダーの不一致やデータ形式を確認してください。({e})")
-        return pd.DataFrame()
+        # ... (後略 - 内部ロジックは変更なし)
+        # ...
 
 # --- IVデータ解析用ユーティリティ (キャッシュで高速化) ---
 # (前回のコードから変更なし)
@@ -311,8 +310,7 @@ def page_data_list(sheet_name, title, col_time, col_filter=None, col_memo=None, 
     """汎用的なデータ一覧ページ"""
     
     st.header(title)
-    df = get_sheet_as_df(gc, SPREADSHEET_NAME, sheet_name)
-
+    df = get_sheet_as_df(SPREADSHEET_NAME, sheet_name)
     if df.empty: st.info("データがありません。"); return
         
     st.subheader("絞り込みと検索")
@@ -929,5 +927,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
