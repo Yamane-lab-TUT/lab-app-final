@@ -129,13 +129,18 @@ class DummyStorageClient:
 
 @st.cache_resource(ttl=3600)
 def initialize_google_services():
-    """Streamlit Secretsから認証情報を読み込み、Googleサービスを初期化する"""
+    """
+    Streamlit Secretsから認証情報を読み込み、Googleサービスを初期化する
+    """
     if "gcs_credentials" not in st.secrets:
+        # このエラーは secrets.toml に CLOUD_STORAGE_BUCKET_NAME しかなく gcs_credentials がない場合に発生
         st.error("❌ 致命的なエラー: Streamlit CloudのSecretsに `gcs_credentials` が見つかりません。")
         return DummyGSClient(), DummyStorageClient()
 
     try:
-        info = json.loads(st.secrets["gcs_credentials"])
+        # JSON文字列を直接ロード
+        # サービスの初期化に必要な情報が格納された辞書
+        info = json.loads(st.secrets["gcs_credentials"]) 
         
         # gspread (Spreadsheet) の認証
         gc = gspread.service_account_from_dict(info)
@@ -145,7 +150,13 @@ def initialize_google_services():
 
         return gc, storage_client
 
+    except json.JSONDecodeError as e:
+        # JSONパースエラーを specifically catch する
+        st.error(f"❌ 認証エラー（JSON形式不正）: サービスアカウントのJSON形式が不正です。secrets.toml の `gcs_credentials` の値が、**三重引用符 `\"\"\"` で囲まれた正しいJSON文字列**であることを確認してください。エラー詳細: {e}")
+        return DummyGSClient(), DummyStorageClient()
+        
     except Exception as e:
+        # その他の認証エラー
         st.error(f"❌ 認証エラー: サービスアカウントの初期化に失敗しました。認証情報をご確認ください。({e})")
         return DummyGSClient(), DummyStorageClient()
 
@@ -900,3 +911,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
