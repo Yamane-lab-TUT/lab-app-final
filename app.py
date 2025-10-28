@@ -215,39 +215,27 @@ def load_pl_data(uploaded_file):
 def load_iv_data(uploaded_file):
     """
     アップロードされたIV特性のtxtファイルを読み込み、Pandas DataFrameを返す関数。
-    データは2列（Voltage, Current）の形式を想定します。
-    パフォーマンス改善のため、最初に高速なCエンジンで一般的な区切り文字を試みます。
-    ★修正: ヘッダー行 (VF(V) IF(A)など) をスキップし、読み込み失敗を防ぐ。
+    ロバストなPythonエンジンと正規表現を使用し、ヘッダー行を確実にスキップします。
     """
     try:
-        # ヘッダー行(VF(V) IF(A)など)をスキップするため、StringIOのデータ全体を保持
         data_string_io = io.StringIO(uploaded_file.getvalue().decode('utf-8'))
         
-        df = None
-        
-        # skiprows=1, header=None を追加し、最初の行をヘッダーとして解釈せず、データとして読み込ませる
-        # これにより、'VF(V) IF(A)'のようなヘッダー行で発生していた読み込みエラーを回避する
-        common_read_params = {'skiprows': 1, 'header': None}
-
-        # 1. 高速なCエンジンで、タブ区切りを試す
-        try:
-            data_string_io.seek(0)
-            df = pd.read_csv(data_string_io, sep='\t', engine='c', **common_read_params)
-        except Exception:
-            # 2. 次にスペース区切りを試す
-            try:
-                data_string_io.seek(0)
-                # skipinitialspace=Trueで複数の空白を許容
-                df = pd.read_csv(data_string_io, sep=' ', engine='c', skipinitialspace=True, **common_read_params)
-            except Exception:
-                # 3. 失敗した場合、ロバストなPythonエンジンで \s+ (複数の空白) または , (カンマ) 区切りで読み込む
-                data_string_io.seek(0)
-                df = pd.read_csv(data_string_io, sep=r'\s+|,', engine='python', **common_read_params)
+        # skiprows=1: 最初の1行(VF(V) IF(A))をスキップ
+        # header=None: ヘッダーがないものとして扱う
+        # sep=r'\s+': 複数の空白文字を区切り文字として認識（最もロバスト）
+        # engine='python': 正規表現の区切り文字を使うためPythonエンジンを強制
+        df = pd.read_csv(
+            data_string_io, 
+            sep=r'\s+',              # ★修正箇所: 正規表現 \s+ (一つ以上の空白) で区切る
+            engine='python',        # ★修正箇所: Pythonエンジンを使用
+            skiprows=1,             # 最初の行をスキップ
+            header=None             # ヘッダーなし
+        )
 
         # 2列目以降を削除し、列名を再設定 (列は0, 1)
-        # どの読み込み方法が成功したとしても、最初の2列のみを保持し、列名を変更する
         if df is None or len(df.columns) < 2:
-            st.warning(f"警告：'{uploaded_file.name}'の読み込みに失敗しました。ファイル形式を確認してください。")
+            # 読み込み失敗時の警告は、ここで出力される可能性が高い
+            st.warning(f"警告：'{uploaded_file.name}'の読み込みに失敗しました。ファイル形式を確認してください。（データ列不足）")
             return None
         
         # 最初の2列のみを使用
@@ -992,3 +980,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
