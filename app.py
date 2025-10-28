@@ -165,13 +165,19 @@ def page_iv_analysis():
                     if SHOULD_COMBINE:
                         
                         # 最初のデータフレームを基準に結合を開始
-                        combined_df = all_data_for_export[0]['df'][['Voltage_V']].copy()
-                        
+                        # 'Voltage_V'と最初の電流列を持つDFをスタートとする
+                        start_df = all_data_for_export[0]['df']
+                        combined_df = start_df.copy() 
+        
                         # 2つ目以降のデータフレームを 'Voltage_V' をキーに結合
-                        for item in all_data_for_export:
-                            df_current = item['df'][df_export.columns] # 必要な列のみ使用
-                            combined_df = pd.merge(combined_df, df_current, on='Voltage_V', how='outer')
-                        
+                        for i in range(1, len(all_data_for_export)):
+                            item = all_data_for_export[i]
+                            df_current = item['df']
+                            
+                            # 'Voltage_V'列をキーに、2つ目の列（電流データ）のみを結合
+                            # df_current.columns[0] は 'Voltage_V'、df_current.columns[1] は 'Current_A_XXX'
+                            combined_df = pd.merge(combined_df, df_current[['Voltage_V', df_current.columns[1]]], on='Voltage_V', how='outer')
+    
                         # 電圧順にソート
                         combined_df.sort_values(by='Voltage_V', inplace=True)
                         
@@ -277,5 +283,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
