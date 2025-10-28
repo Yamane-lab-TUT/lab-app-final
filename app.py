@@ -1,11 +1,9 @@
 # --------------------------------------------------------------------------
 # Yamane Lab Convenience Tool - Streamlit Application (app.py)
 #
-# v20.5.0 (最終機能統合・日本語対応版)
-# - FIX: 機能メニューを記録・一覧で統合 (例: エピノート)
-# - FIX: 一覧のデフォルト開始日を 2025年4月1日 に変更
-# - ADD: PLデータ解析ページを実装
-# - ADD: Matplotlibによるグラフの日本語表示に対応
+# v20.5.1 (インポート修正版)
+# - FIX: NameError: name 'storage' is not defined を解消するため、
+#        `from google.cloud import storage` をインポートに追加。
 # --------------------------------------------------------------------------
 
 import streamlit as st
@@ -22,6 +20,14 @@ from io import BytesIO
 import calendar
 import matplotlib.font_manager as fm
 
+# ★★★ 修正箇所: GCSクライアントのインポートを追加 ★★★
+try:
+    from google.cloud import storage
+except ImportError:
+    st.error("❌ 警告: `google-cloud-storage` ライブラリが見つかりません。")
+    pass
+# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+    
 # --- Matplotlib 日本語フォント設定 ---
 # Streamlit Cloud環境で動作する可能性の高いフォントを設定
 try:
@@ -131,6 +137,12 @@ storage_client = DummyStorageClient()
 @st.cache_resource(ttl=3600)
 def initialize_google_services():
     """Streamlit Secretsから認証情報を読み込み、Googleサービスを初期化する"""
+    
+    # storage クラスがロードされているか確認 (修正後のチェック)
+    if 'storage' not in globals():
+        st.error("❌ 致命的なエラー: `google.cloud.storage` のインポートに失敗しました。Streamlitの環境依存と思われます。")
+        return DummyGSClient(), DummyStorageClient()
+        
     if "gcs_credentials" not in st.secrets:
         st.error("❌ 致命的なエラー: Streamlit CloudのSecretsに `gcs_credentials` が見つかりません。")
         return DummyGSClient(), DummyStorageClient()
@@ -258,7 +270,7 @@ def combine_dataframes(dataframes, filenames):
             combined_df[col] = combined_df[col].round(4)
             
     # X軸の列名を結合前に戻す
-    combined_df = combined_df.rename(columns={'X_Value': dataframes[0].columns[0]})
+    combined_df = combined_df.rename(columns={dataframes[0].columns[0]: 'X_Axis'})
     
     return combined_df.rename(columns={dataframes[0].columns[0]: 'X_Axis'})
 
@@ -411,8 +423,6 @@ def page_data_list(sheet_name, title, col_time, col_filter=None, col_memo=None, 
                 else:
                     st.info("添付ファイルはありません。")
 
-
-# --- 機能統合されたページ実装 ---
 
 # 1. エピノート機能
 def page_epi_note_recording():
