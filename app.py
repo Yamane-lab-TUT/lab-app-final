@@ -979,11 +979,11 @@ def page_iv_analysis():
             for filename in filenames:
                 ax.plot(combined_df['X_Axis'], combined_df[filename], label=filename)
             
-            ax.set_xlabel("電圧 (V)") # 日本語ラベル
-            ax.set_ylabel("電流 (A)") # 日本語ラベル
+            ax.set_xlabel("Voltage (V)") # 日本語ラベル
+            ax.set_ylabel("Current (A)") # 日本語ラベル
             ax.grid(True)
             ax.legend(title="ファイル名", loc='best')
-            ax.set_title("IV特性比較") # 日本語タイトル
+            ax.set_title("IV Characteristic Plot") # 日本語タイトル
             
             st.pyplot(fig, use_container_width=True) 
             
@@ -1163,5 +1163,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
