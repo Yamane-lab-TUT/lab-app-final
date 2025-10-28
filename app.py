@@ -1,11 +1,11 @@
-# --------------------------------------------------------------------------
-# Yamane Lab Convenience Tool - Streamlit Application (app.py)
-# 修正版 v20.7.0
-#  - IV結合データ補間対応済み
-#  - PL解析ファイル読み込み修正
-#  - 画像インライン表示（自動リサイズ対応）
-#  - メニュー順序変更（IV/PLをメンテノート下に配置）
-# --------------------------------------------------------------------------
+# -*- coding: utf-8 -*-
+"""
+bennriyasann3_fixed_v2_part1.py
+Yamane Lab Convenience Tool - 修正版パート1（共通ユーティリティ・認証・データ読み込み等）
+
+このファイルはアプリ本体を二分割して提供するための「前半」です。
+後半（ページ定義・メインルーティング）は続けて出力します。
+"""
 
 import streamlit as st
 import gspread
@@ -22,257 +22,1029 @@ from io import BytesIO
 import calendar
 import matplotlib.font_manager as fm
 
-# GCSクライアントのインポート
+# Optional: google cloud client import
 try:
     from google.cloud import storage
-except ImportError:
-    st.error("❌ `google-cloud-storage` が見つかりません。")
-    pass
+except Exception:
+    storage = None  # GCS が無い環境でも起動可能
 
-# --- Matplotlib 日本語フォント設定 ---
+# --- Matplotlib 日本語フォント (安全に設定) ---
 try:
     plt.rcParams['font.family'] = 'sans-serif'
-    plt.rcParams['font.sans-serif'] = ['Meiryo', 'IPAexGothic', 'Noto Sans CJK JP']
+    plt.rcParams['font.sans-serif'] = [
+        'Hiragino Maru Gothic Pro', 'Yu Gothic', 'Meiryo',
+        'TakaoGothic', 'IPAexGothic', 'Noto Sans CJK JP'
+    ]
     plt.rcParams['axes.unicode_minus'] = False
 except Exception:
     pass
 
+# --- Streamlit ページ設定 ---
 st.set_page_config(page_title="山根研 便利屋さん", layout="wide")
 
-CLOUD_STORAGE_BUCKET_NAME = "yamane-lab-app-files"
-SPREADSHEET_NAME = 'エピノート'
+# ---------------------------
+# --- Global constants ------
+# ---------------------------
+CLOUD_STORAGE_BUCKET_NAME = "yamane-lab-app-files"  # 必要に応じて置き換えてください
+SPREADSHEET_NAME = "エピノート"
 
-# --- Google 認証 ---
+# --- シート名 & カラム名（既存のスプレッドシート構成に合わせています） ---
+SHEET_EPI_DATA = 'エピノート_データ'
+EPI_COL_TIMESTAMP = 'タイムスタンプ'
+EPI_COL_NOTE_TYPE = 'ノート種別'
+EPI_COL_CATEGORY = 'カテゴリ'
+EPI_COL_MEMO = 'メモ'
+EPI_COL_FILENAME = 'ファイル名'
+EPI_COL_FILE_URL = '写真URL'
+
+SHEET_MAINTE_DATA = 'メンテノート_データ'
+MAINT_COL_TIMESTAMP = 'タイムスタンプ'
+MAINT_COL_NOTE_TYPE = 'ノート種別'
+MAINT_COL_MEMO = 'メモ'
+MAINT_COL_FILENAME = 'ファイル名'
+MAINT_COL_FILE_URL = '写真URL'
+
+SHEET_MEETING_DATA = '議事録_データ'
+MEETING_COL_TIMESTAMP = 'タイムスタンプ'
+MEETING_COL_TITLE = '会議タイトル'
+MEETING_COL_AUDIO_NAME = '音声ファイル名'
+MEETING_COL_AUDIO_URL = '音声ファイルURL'
+MEETING_COL_CONTENT = '議事録内容'
+
+SHEET_HANDOVER_DATA = '引き継ぎ_データ'
+HANDOVER_COL_TIMESTAMP = 'タイムスタンプ'
+HANDOVER_COL_TYPE = '種類'
+HANDOVER_COL_TITLE = 'タイトル'
+HANDOVER_COL_MEMO = 'メモ'
+
+SHEET_QA_DATA = '知恵袋_データ'
+QA_COL_TIMESTAMP = 'タイムスタンプ'
+QA_COL_TITLE = '質問タイトル'
+QA_COL_CONTENT = '質問内容'
+QA_COL_CONTACT = '連絡先メールアドレス'
+QA_COL_FILENAME = '添付ファイル名'
+QA_COL_FILE_URL = '添付ファイルURL'
+QA_COL_STATUS = 'ステータス'
+SHEET_QA_ANSWER = '知恵袋_解答'
+
+SHEET_CONTACT_DATA = 'お問い合わせ_データ'
+CONTACT_COL_TIMESTAMP = 'タイムスタンプ'
+CONTACT_COL_TYPE = 'お問い合わせの種類'
+CONTACT_COL_DETAIL = '詳細内容'
+CONTACT_COL_CONTACT = '連絡先'
+
+SHEET_TROUBLE_DATA = 'トラブル報告_データ'
+TROUBLE_COL_TIMESTAMP = 'タイムスタンプ'
+TROUBLE_COL_DEVICE = '機器/場所'
+TROUBLE_COL_OCCUR_DATE = '発生日'
+TROUBLE_COL_OCCUR_TIME = 'トラブル発生時'
+TROUBLE_COL_CAUSE = '原因/究明'
+TROUBLE_COL_SOLUTION = '対策/復旧'
+TROUBLE_COL_PREVENTION = '再発防止策'
+TROUBLE_COL_REPORTER = '報告者'
+TROUBLE_COL_FILENAME = 'ファイル名'
+TROUBLE_COL_FILE_URL = 'ファイルURL'
+TROUBLE_COL_TITLE = '件名/タイトル'
+
+# ---------------------------
+# --- Google Service Stubs ---
+# ---------------------------
 class DummyGSClient:
+    """認証失敗時用ダミー gspread クライアント"""
     def open(self, name): return self
     def worksheet(self, name): return self
+    def get_all_records(self): return []
     def get_all_values(self): return []
     def append_row(self, values): pass
 
 class DummyStorageClient:
+    """認証失敗時用ダミー GCS クライアント"""
     def bucket(self, name): return self
     def blob(self, name): return self
-    def upload_from_file(self, f, content_type): pass
+    def upload_from_file(self, file_obj, content_type): pass
+    def list_blobs(self, **kwargs): return []
 
+# グローバル初期値（認証されていない状態でもUIは起動する）
 gc = DummyGSClient()
 storage_client = DummyStorageClient()
 
+# ---------------------------
+# --- Google 認証初期化 ---
+# ---------------------------
 @st.cache_resource(ttl=3600)
 def initialize_google_services():
-    if "gcs_credentials" not in st.secrets:
-        st.warning("⚠️ Secretsに`gcs_credentials`がありません。")
+    """Streamlit secrets からサービスアカウントJSONを読み込み、gspread と GCS を初期化"""
+    global storage
+    if storage is None:
+        # google.cloud.storage が import できない環境
+        st.sidebar.warning("⚠️ `google-cloud-storage` が利用できません。ファイルアップロード機能は制限されます。")
         return DummyGSClient(), DummyStorageClient()
+
+    if "gcs_credentials" not in st.secrets:
+        st.sidebar.info("Streamlit secrets に `gcs_credentials` を設定してください（オフラインでも一部機能は動きます）。")
+        return DummyGSClient(), DummyStorageClient()
+
     try:
-        info = json.loads(st.secrets["gcs_credentials"])
+        raw = st.secrets["gcs_credentials"]
+        # クレンジング
+        cleaned = raw.strip().replace('\t', '').replace('\r', '').replace('\n', '')
+        info = json.loads(cleaned)
         gc_real = gspread.service_account_from_dict(info)
         storage_real = storage.Client.from_service_account_info(info)
-        st.sidebar.success("✅ Google認証成功")
+        st.sidebar.success("✅ Googleサービス認証 成功")
         return gc_real, storage_real
+    except json.JSONDecodeError as e:
+        st.sidebar.error(f"認証情報のJSONが不正です: {e}")
+        return DummyGSClient(), DummyStorageClient()
     except Exception as e:
-        st.error(f"認証エラー: {e}")
+        st.sidebar.error(f"Googleサービスの初期化に失敗しました: {e}")
         return DummyGSClient(), DummyStorageClient()
 
+# 実際に初期化してグローバルを書き換え
 gc, storage_client = initialize_google_services()
 
-# --------------------------------------------------------------------------
-# データ取得関数
-# --------------------------------------------------------------------------
-@st.cache_data(ttl=600)
+# ---------------------------
+# --- Spreadsheet 関連 ---
+# ---------------------------
+@st.cache_data(ttl=600, show_spinner="スプレッドシートからデータを読み込み中...")
 def get_sheet_as_df(spreadsheet_name, sheet_name):
+    """指定スプレッドシートシートを DataFrame で返す。失敗時は空のDFを返す"""
+    global gc
     try:
+        if isinstance(gc, DummyGSClient):
+            # 認証されていない場合は空DFを返す（UIテスト用）
+            return pd.DataFrame()
         ws = gc.open(spreadsheet_name).worksheet(sheet_name)
         data = ws.get_all_values()
         if not data or len(data) <= 1:
             return pd.DataFrame(columns=data[0] if data else [])
-        return pd.DataFrame(data[1:], columns=data[0])
+        df = pd.DataFrame(data[1:], columns=data[0])
+        return df
     except Exception:
         return pd.DataFrame()
 
-# --------------------------------------------------------------------------
-# --- IV/PL共通データ読み込みユーティリティ ---
-# --------------------------------------------------------------------------
+# ---------------------------
+# --- データ読み込みコア ---
+# ---------------------------
 def _load_two_column_data_core(uploaded_bytes, column_names):
+    """
+    バイト列から 2列データを抽出して DataFrame を返す。
+    - uploaded_bytes: bytes
+    - column_names: list[str] 例 ['Axis_X', 'Current']
+    """
     try:
         text = uploaded_bytes.decode('utf-8', errors='ignore').splitlines()
-        data_lines = [l for l in text if l.strip() and not l.startswith(('#', '!', '/'))]
-        if not data_lines: return None
+        # コメント/空行を除く
+        data_lines = []
+        for line in text:
+            s = line.strip()
+            if not s:
+                continue
+            if s.startswith(('#', '!', '/')):  # コメント行
+                continue
+            data_lines.append(line)
+        if not data_lines:
+            return None
+        # pandas に渡す
         df = pd.read_csv(io.StringIO("\n".join(data_lines)),
                          sep=r'\s+|,|\t', engine='python', header=None)
+        if df.shape[1] < 2:
+            return None
         df = df.iloc[:, :2]
         df.columns = column_names
+        # 数値変換
         df[column_names[0]] = pd.to_numeric(df[column_names[0]], errors='coerce')
         df[column_names[1]] = pd.to_numeric(df[column_names[1]], errors='coerce')
-        df = df.dropna().sort_values(column_names[0])
+        df = df.dropna().sort_values(column_names[0]).reset_index(drop=True)
+        if df.empty:
+            return None
         return df
     except Exception:
         return None
 
-@st.cache_data(show_spinner="IVデータ解析中...")
-def load_data_file(uploaded_bytes, filename):
-    return _load_two_column_data_core(uploaded_bytes, ['Axis_X', filename])
+# ---------------------------
+# --- IV / PL 専用読み込み ---
+# ---------------------------
+@st.cache_data(show_spinner="IVデータを解析中...", max_entries=128)
+def load_data_file(uploaded_bytes, uploaded_filename):
+    """IVファイルを読み込み Axis_X と filename 列を返す（uploaded_bytes: bytes）"""
+    return _load_two_column_data_core(uploaded_bytes, ['Axis_X', uploaded_filename])
 
-@st.cache_data(show_spinner="PLデータ解析中...")
+@st.cache_data(show_spinner="PLデータを解析中...", max_entries=128)
 def load_pl_data(uploaded_file):
+    """
+    PLファイルを読み込む (UploadedFile を直接受け取る)。
+    Streamlit 環境差異により getvalue() を用いて安定して読み込む実装。
+    """
     try:
-        file_bytes = uploaded_file.read()
-        uploaded_file.seek(0)
+        # 安定性のため getvalue() を使用
+        file_bytes = uploaded_file.getvalue()
         df = _load_two_column_data_core(file_bytes, ['pixel', 'intensity'])
         if df is not None and not df.empty:
             return df[['pixel', 'intensity']]
     except Exception as e:
-        st.error(f"PLデータの読み込みに失敗しました: {e}")
+        # 呼び出し側でエラーメッセージを出す設計にするためここでは None を返す
+        st.error(f"PLデータの読み込みに失敗しました ({getattr(uploaded_file, 'name', '')}): {e}")
     return None
 
-# --------------------------------------------------------------------------
-# --- IVデータ結合（改良版・補間対応） ---
-# --------------------------------------------------------------------------
-@st.cache_data(show_spinner="IVデータ結合中...")
+# ---------------------------
+# --- IV データ結合（補間） ---
+# ---------------------------
+@st.cache_data(show_spinner="IVデータを結合中...", max_entries=64)
 def combine_dataframes(dataframes, filenames, num_points=500):
+    """
+    複数のIVデータを共通電圧軸で線形補間して結合（欠損を作らない）。
+    - dataframes: list of DataFrame (each has 'Axis_X' and a second column)
+    - filenames: list of str (列名に使用)
+    """
     if not dataframes:
         return None
-    all_x = np.concatenate([df['Axis_X'].values for df in dataframes])
+
+    # 各DFの Axis_X を集める
+    try:
+        all_x = np.concatenate([df['Axis_X'].values for df in dataframes if 'Axis_X' in df.columns])
+    except Exception:
+        return None
+
+    if all_x.size == 0:
+        return None
+
     x_common = np.linspace(all_x.min(), all_x.max(), num_points)
     combined_df = pd.DataFrame({'X_Axis': x_common})
+
     for df, name in zip(dataframes, filenames):
+        # df は Axis_X, <value> の2列構成を仮定
         df_sorted = df.sort_values('Axis_X')
-        y_interp = np.interp(x_common, df_sorted['Axis_X'], df_sorted.iloc[:, 1])
+        y_vals = df_sorted.iloc[:, 1].values
+        x_vals = df_sorted['Axis_X'].values
+        # 線形補間（境界外は最外端の値を使用）
+        y_interp = np.interp(x_common, x_vals, y_vals, left=y_vals[0], right=y_vals[-1])
         combined_df[name] = y_interp
+
     return combined_df
 
-# --------------------------------------------------------------------------
-# --- 添付ファイル表示（自動画像リサイズ付き） ---
-# --------------------------------------------------------------------------
-def display_attached_files(row, col_url, col_filename=None):
-    if col_url not in row or not row[col_url]:
-        st.info("添付ファイルはありません。")
-        return
+# ---------------------------
+# --- GCS アップロードユーティリティ ---
+# ---------------------------
+def upload_file_to_gcs(storage_client_obj, file_obj, folder_name):
+    """
+    file_obj: streamlit uploaded file (has .name, .type, .getvalue()/read())
+    Returns: (original_filename, public_url) or (None, None) on error
+    """
+    if isinstance(storage_client_obj, DummyStorageClient) or storage is None:
+        # ダミー動作：未認証環境では None を返す
+        return None, None
+
     try:
-        urls = json.loads(row[col_url])
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        original_filename = file_obj.name
+        safe_filename = original_filename.replace(' ', '_').replace('/', '_')
+        gcs_filename = f"{folder_name}/{timestamp}_{safe_filename}"
+
+        bucket = storage_client_obj.bucket(CLOUD_STORAGE_BUCKET_NAME)
+        blob = bucket.blob(gcs_filename)
+
+        # file_objはStreamlit UploadedFile なので getvalue() を使う
+        file_bytes = file_obj.getvalue()
+        blob.upload_from_string(file_bytes, content_type=file_obj.type if hasattr(file_obj, 'type') else 'application/octet-stream')
+
+        public_url = f"https://storage.googleapis.com/{CLOUD_STORAGE_BUCKET_NAME}/{url_quote(gcs_filename)}"
+        return original_filename, public_url
+    except Exception as e:
+        st.error(f"GCS にアップロードできませんでした: {e}")
+        return None, None
+
+# ---------------------------
+# --- 添付ファイル表示ユーティリティ（自動リサイズ） ---
+# ---------------------------
+def display_attached_files(row_dict, col_url_key, col_filename_key=None):
+    """
+    row_dict: pandas Series / dict representing a row
+    col_url_key: key name of the URL field (保存時は JSON array を期待)
+    col_filename_key: key name of filenames (optional, JSON array)
+    表示は st.image(..., use_container_width=True) で行う（自動リサイズ）
+    """
+    try:
+        if col_url_key not in row_dict or not row_dict[col_url_key]:
+            st.info("添付ファイルはありません。")
+            return
+
+        # JSON 形式で保存されていることが多い
+        urls = []
+        try:
+            urls = json.loads(row_dict[col_url_key])
+            if not isinstance(urls, list):
+                urls = [urls]
+        except Exception:
+            # カンマ区切り等の古い形式
+            urls = [s.strip().strip('"') for s in str(row_dict[col_url_key]).split(',') if s.strip()]
+
         filenames = []
-        if col_filename and row.get(col_filename):
-            filenames = json.loads(row[col_filename])
-        if not filenames:
-            filenames = ['ファイル'] * len(urls)
-        for filename, url in zip(filenames, urls):
+        if col_filename_key and col_filename_key in row_dict and row_dict[col_filename_key]:
+            try:
+                filenames = json.loads(row_dict[col_filename_key])
+                if not isinstance(filenames, list):
+                    filenames = [filenames]
+            except Exception:
+                # 古い形式は無視して URL のファイル名を使用
+                filenames = []
+
+        # 表示
+        for idx, url in enumerate(urls):
             if not url:
                 continue
-            is_image = url.lower().endswith(('.png', '.jpg', '.jpeg'))
+            label = filenames[idx] if idx < len(filenames) else os.path.basename(url)
+            lower = url.lower()
+            is_image = lower.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp'))
             if is_image:
-                st.image(url, caption=filename, use_container_width=True)
+                # 自動リサイズ（Streamlit に任せる）
+                st.image(url, caption=label, use_column_width=True)
             else:
-                st.markdown(f"🔗 [{filename}]({url})")
-    except Exception:
-        st.markdown("⚠️ 添付ファイルの読み込みに失敗しました。")
+                st.markdown(f"🔗 [{label}]({url})")
+    except Exception as e:
+        st.error(f"添付ファイルの表示に失敗しました: {e}")
 
-# --------------------------------------------------------------------------
-# --- 各ページ（IV/PL解析のみ再掲） ---
-# --------------------------------------------------------------------------
+# -*- coding: utf-8 -*-
+"""
+bennriyasann3_fixed_v2_part2.py
+Yamane Lab Convenience Tool - 修正版パート2（ページ実装・ルーティング）
+
+前半（part1）で定義したユーティリティ群をインポートして使用する想定です。
+同じディレクトリに part1 を置くか、part1 の内容を上部に結合して実行してください。
+"""
+
+import streamlit as st
+import pandas as pd
+import json
+from io import BytesIO
+from datetime import datetime
+
+# ---------------------------
+# --- ユーティリティ参照 ---
+# ---------------------------
+# 前半部を同一ファイルにまとめない場合は import で呼ぶ（例: from bennriyasann3_fixed_v2_part1 import *）
+# ここでは「同一実行環境にpart1がロード済み」と仮定します。
+
+# ---------------------------
+# --- 汎用的な一覧表示関数 ---
+# ---------------------------
+def page_data_list(sheet_name, title, col_time, col_filter=None, col_memo=None, col_url=None, detail_cols=None, col_filename=None):
+    """汎用的なデータ一覧ページ"""
+    st.header(f"📚 {title} 一覧")
+    df = get_sheet_as_df(SPREADSHEET_NAME, sheet_name)
+
+    if df.empty:
+        st.info("データがありません。")
+        return
+
+    st.subheader("絞り込みと検索")
+
+    # フィルタ列があれば選択肢を表示
+    if col_filter and col_filter in df.columns:
+        df[col_filter] = df[col_filter].fillna('なし')
+        options = ["すべて"] + sorted(list(df[col_filter].unique()))
+        sel = st.selectbox(f"「{col_filter}」で絞り込み", options)
+        if sel != "すべて":
+            df = df[df[col_filter] == sel]
+
+    # 日付フィルタ（タイムスタンプ列がある場合）
+    if col_time and col_time in df.columns:
+        try:
+            df['date_only'] = pd.to_datetime(
+                df[col_time].astype(str).str.replace(r'[^0-9]', '', regex=True).str[:8],
+                errors='coerce', format='%Y%m%d'
+            ).dt.date
+        except Exception:
+            df['date_only'] = pd.NaT
+
+        df_valid = df.dropna(subset=['date_only'])
+        if not df_valid.empty:
+            min_date = df_valid['date_only'].min()
+            max_date = df_valid['date_only'].max()
+            default_start = date(2025, 4, 1)
+            start_date = st.date_input("開始日", value=max(min_date, default_start) if isinstance(min_date, date) else default_start)
+            end_date = st.date_input("終了日", value=max_date)
+            df = df_valid[(df_valid['date_only'] >= start_date) & (df_valid['date_only'] <= end_date)].drop(columns=['date_only'])
+
+    if df.empty:
+        st.info("絞り込み条件に一致するデータがありません。")
+        return
+
+    df = df.sort_values(by=col_time, ascending=False).reset_index(drop=True)
+
+    st.markdown("---")
+    st.subheader(f"検索結果 ({len(df)} 件)")
+
+    # 表示用の選択ボックス（行を選ぶと詳細表示）
+    df['display_index'] = df.index
+    def fmt(i):
+        row = df.loc[i]
+        t = str(row[col_time]) if col_time in row and pd.notna(row[col_time]) else ""
+        filt = row[col_filter] if col_filter and col_filter in row and pd.notna(row[col_filter]) else ""
+        memo_preview = row[col_memo].split('\n')[0] if col_memo and col_memo in row and pd.notna(row[col_memo]) else ""
+        return f"[{t.split('_')[0]}] {filt} - {memo_preview[:50]}"
+
+    sel_idx = st.selectbox("詳細を表示する記録を選択", options=df['display_index'], format_func=fmt)
+
+    if sel_idx is not None:
+        row = df.loc[sel_idx]
+        st.markdown(f"#### 選択された記録 (ID: {sel_idx+1})")
+        if detail_cols:
+            for c in detail_cols:
+                if c in row and pd.notna(row[c]):
+                    # メモや長文はテキスト表示
+                    if col_memo == c or '内容' in c or len(str(row[c])) > 200:
+                        st.markdown(f"**{c}:**")
+                        st.text(row[c])
+                    elif 'URL' in c or 'ファイル' in c:
+                        # 添付は別セクションで処理
+                        continue
+                    else:
+                        st.write(f"**{c}:** {row[c]}")
+
+        # 添付ファイルの表示
+        if col_url and col_url in row:
+            st.markdown("##### 添付ファイル")
+            display_attached_files(row, col_url, col_filename)
+
+# ---------------------------
+# --- エピノートページ ---
+# ---------------------------
+def page_epi_note_recording():
+    st.markdown("#### 📝 新しいエピノートを記録")
+    with st.form(key='epi_note_form'):
+        col1, col2 = st.columns(2)
+        with col1:
+            ep_category = st.selectbox(f"{EPI_COL_CATEGORY} (装置種別)", ["D1", "D2", "その他"], key='ep_category_input')
+        with col2:
+            ep_title = st.text_input("番号 (例: 791) (必須)", key='ep_title_input')
+        ep_memo = st.text_area("構造 (例: 10nm GaAs/AlGaAs/GaAs) (空白でも可)", height=100, key='ep_memo_input')
+        uploaded_files = st.file_uploader("添付ファイル (画像、グラフなど)", type=['jpg', 'jpeg', 'png', 'pdf', 'txt'], accept_multiple_files=True)
+        st.markdown("---")
+        submit_button = st.form_submit_button(label='記録をスプレッドシートに保存')
+
+    if submit_button:
+        if not ep_title:
+            st.warning("番号 (例: 791) は必須項目です。")
+            return
+        filenames_list = []; urls_list = []
+        if uploaded_files:
+            with st.spinner("ファイルをGCSにアップロード中..."):
+                for file_obj in uploaded_files:
+                    filename, url = upload_file_to_gcs(storage_client, file_obj, "ep_notes")
+                    if url:
+                        filenames_list.append(filename)
+                        urls_list.append(url)
+        filenames_json = json.dumps(filenames_list)
+        urls_json = json.dumps(urls_list)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        memo_content = f"{ep_title}\n{ep_memo}"
+        row_data = [timestamp, EPI_COL_NOTE_TYPE, ep_category, memo_content, filenames_json, urls_json]
+        try:
+            worksheet = gc.open(SPREADSHEET_NAME).worksheet(SHEET_EPI_DATA)
+            worksheet.append_row(row_data)
+            st.success("✅ エピノートをアップロードしました！")
+            st.cache_data.clear()
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ データ書き込みエラー: {e}")
+
+def page_epi_note_list():
+    detail_cols = [EPI_COL_TIMESTAMP, EPI_COL_CATEGORY, EPI_COL_NOTE_TYPE, EPI_COL_MEMO, EPI_COL_FILENAME]
+    page_data_list(
+        sheet_name=SHEET_EPI_DATA,
+        title="エピノート",
+        col_time=EPI_COL_TIMESTAMP,
+        col_filter=EPI_COL_CATEGORY,
+        col_memo=EPI_COL_MEMO,
+        col_url=EPI_COL_FILE_URL,
+        detail_cols=detail_cols,
+        col_filename=EPI_COL_FILENAME
+    )
+
+def page_epi_note():
+    st.header("エピノート機能")
+    st.markdown("---")
+    tab = st.radio("表示切替", ["📝 記録", "📚 一覧"], key="epi_tab", horizontal=True)
+    if tab == "📝 記録":
+        page_epi_note_recording()
+    else:
+        page_epi_note_list()
+
+# ---------------------------
+# --- メンテノートページ ---
+# ---------------------------
+def page_mainte_recording():
+    st.markdown("#### 🛠️ 新しいメンテノートを記録")
+    with st.form(key='mainte_note_form'):
+        mainte_title = st.text_input("メンテタイトル (例: D1 ドライポンプ交換) (必須)", key='mainte_title_input')
+        memo_content = st.text_area("詳細メモ", height=150, key='mainte_memo_input')
+        uploaded_files = st.file_uploader("添付ファイル (画像、グラフなど)", type=['jpg', 'jpeg', 'png', 'pdf', 'txt'], accept_multiple_files=True)
+        st.markdown("---")
+        submit_button = st.form_submit_button(label='記録をスプレッドシートに保存')
+    if submit_button:
+        if not mainte_title:
+            st.warning("メンテタイトルを入力してください。")
+            return
+        filenames_list = []; urls_list = []
+        if uploaded_files:
+            with st.spinner("ファイルをGCSにアップロード中..."):
+                for file_obj in uploaded_files:
+                    filename, url = upload_file_to_gcs(storage_client, file_obj, "mainte_notes")
+                    if url:
+                        filenames_list.append(filename)
+                        urls_list.append(url)
+        filenames_json = json.dumps(filenames_list)
+        urls_json = json.dumps(urls_list)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        memo_to_save = f"[{mainte_title}]\n{memo_content}"
+        row_data = [timestamp, MAINT_COL_NOTE_TYPE, memo_to_save, filenames_json, urls_json]
+        try:
+            worksheet = gc.open(SPREADSHEET_NAME).worksheet(SHEET_MAINTE_DATA)
+            worksheet.append_row(row_data)
+            st.success("✅ メンテノートをアップロードしました！")
+            st.cache_data.clear()
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ データ書き込みエラー: {e}")
+
+def page_mainte_list():
+    detail_cols = [MAINT_COL_TIMESTAMP, MAINT_COL_NOTE_TYPE, MAINT_COL_MEMO, MAINT_COL_FILENAME]
+    page_data_list(
+        sheet_name=SHEET_MAINTE_DATA,
+        title="メンテノート",
+        col_time=MAINT_COL_TIMESTAMP,
+        col_filter=MAINT_COL_NOTE_TYPE,
+        col_memo=MAINT_COL_MEMO,
+        col_url=MAINT_COL_FILE_URL,
+        detail_cols=detail_cols,
+        col_filename=MAINT_COL_FILENAME
+    )
+
+def page_mainte_note():
+    st.header("メンテノート機能")
+    st.markdown("---")
+    tab = st.radio("表示切替", ["📝 記録", "📚 一覧"], key="mainte_tab", horizontal=True)
+    if tab == "📝 記録":
+        page_mainte_recording()
+    else:
+        page_mainte_list()
+
+# ---------------------------
+# --- 議事録ページ ---
+# ---------------------------
+def page_meeting_recording():
+    st.markdown("#### 📝 新しい議事録を記録")
+    with st.form(key='meeting_form'):
+        meeting_title = st.text_input(f"{MEETING_COL_TITLE} (例: 2025-10-28 定例会議)", key='meeting_title_input')
+        meeting_content = st.text_area(f"{MEETING_COL_CONTENT}", height=300, key='meeting_content_input')
+        col1, col2 = st.columns(2)
+        with col1:
+            audio_name = st.text_input(f"{MEETING_COL_AUDIO_NAME} (例: audio.m4a)", key='audio_name_input')
+        with col2:
+            audio_url = st.text_input(f"{MEETING_COL_AUDIO_URL} (Google Drive URLなど)", key='audio_url_input')
+        submit_button = st.form_submit_button(label='記録をスプレッドシートに保存')
+    if submit_button:
+        if not meeting_title or not meeting_content:
+            st.warning("会議タイトルと議事録内容を入力してください。")
+            return
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        row_data = [timestamp, meeting_title, audio_name, audio_url, meeting_content]
+        try:
+            worksheet = gc.open(SPREADSHEET_NAME).worksheet(SHEET_MEETING_DATA)
+            worksheet.append_row(row_data)
+            st.success("✅ 議事録をアップロードしました！")
+            st.cache_data.clear()
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ データ書き込みエラー: {e}")
+
+def page_meeting_list():
+    detail_cols = [MEETING_COL_TIMESTAMP, MEETING_COL_TITLE, MEETING_COL_CONTENT, MEETING_COL_AUDIO_NAME, MEETING_COL_AUDIO_URL]
+    page_data_list(
+        sheet_name=SHEET_MEETING_DATA,
+        title="議事録",
+        col_time=MEETING_COL_TIMESTAMP,
+        col_filter=MEETING_COL_TITLE,
+        col_memo=MEETING_COL_CONTENT,
+        col_url=MEETING_COL_AUDIO_URL,
+        detail_cols=detail_cols,
+        col_filename=MEETING_COL_AUDIO_NAME
+    )
+
+def page_meeting_note():
+    st.header("議事録・ミーティングメモ機能")
+    st.markdown("---")
+    tab = st.radio("表示切替", ["📝 記録", "📚 一覧"], key="meeting_tab", horizontal=True)
+    if tab == "📝 記録":
+        page_meeting_recording()
+    else:
+        page_meeting_list()
+
+# ---------------------------
+# --- 知恵袋ページ ---
+# ---------------------------
+def page_qa_recording():
+    st.markdown("#### 💡 新しい質問を投稿")
+    with st.form(key='qa_form'):
+        qa_title = st.text_input(f"{QA_COL_TITLE} (例: XRDの測定手順について)", key='qa_title_input')
+        qa_content = st.text_area(f"{QA_COL_CONTENT}", height=200, key='qa_content_input')
+        col1, col2 = st.columns(2)
+        with col1:
+            qa_contact = st.text_input(f"{QA_COL_CONTACT} (任意)", key='qa_contact_input')
+        with col2:
+            uploaded_files = st.file_uploader("添付ファイル", type=['jpg', 'jpeg', 'png', 'pdf', 'txt'], accept_multiple_files=True)
+        st.markdown("---")
+        submit_button = st.form_submit_button(label='質問を投稿')
+    if submit_button:
+        if not qa_title or not qa_content:
+            st.warning("質問タイトルと質問内容を入力してください。")
+            return
+        filenames_list = []; urls_list = []
+        if uploaded_files:
+            with st.spinner("ファイルをGCSにアップロード中..."):
+                for file_obj in uploaded_files:
+                    filename, url = upload_file_to_gcs(storage_client, file_obj, "qa_files")
+                    if url:
+                        filenames_list.append(filename)
+                        urls_list.append(url)
+        filenames_json = json.dumps(filenames_list)
+        urls_json = json.dumps(urls_list)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        row_data = [timestamp, qa_title, qa_content, qa_contact, filenames_json, urls_json, "未解決"]
+        try:
+            worksheet = gc.open(SPREADSHEET_NAME).worksheet(SHEET_QA_DATA)
+            worksheet.append_row(row_data)
+            st.success("✅ 質問をアップロードしました！")
+            st.cache_data.clear()
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ データ書き込みエラー: {e}")
+
+def page_qa_list():
+    detail_cols = [QA_COL_TIMESTAMP, QA_COL_TITLE, QA_COL_CONTENT, QA_COL_CONTACT, QA_COL_STATUS, QA_COL_FILENAME]
+    page_data_list(
+        sheet_name=SHEET_QA_DATA,
+        title="知恵袋・質問箱",
+        col_time=QA_COL_TIMESTAMP,
+        col_filter=QA_COL_STATUS,
+        col_memo=QA_COL_CONTENT,
+        col_url=QA_COL_FILE_URL,
+        detail_cols=detail_cols,
+        col_filename=QA_COL_FILENAME
+    )
+
+def page_qa_box():
+    st.header("知恵袋・質問箱機能")
+    st.markdown("---")
+    tab = st.radio("表示切替", ["💡 質問投稿", "📚 質問一覧"], key="qa_tab", horizontal=True)
+    if tab == "💡 質問投稿":
+        page_qa_recording()
+    else:
+        page_qa_list()
+
+# ---------------------------
+# --- 引き継ぎページ ---
+# ---------------------------
+def page_handover_recording():
+    st.markdown("#### 🤝 新しい引き継ぎメモを記録")
+    with st.form(key='handover_form'):
+        handover_type = st.selectbox(f"{HANDOVER_COL_TYPE} (カテゴリ)", ["マニュアル", "装置設定", "その他メモ"])
+        handover_title = st.text_input(f"{HANDOVER_COL_TITLE} (例: D1 MBE起動手順)", key='handover_title_input')
+        handover_memo = st.text_area(f"{HANDOVER_COL_MEMO}", height=150, key='handover_memo_input')
+        st.markdown("---")
+        submit_button = st.form_submit_button(label='記録をスプレッドシートに保存')
+    if submit_button:
+        if not handover_title:
+            st.warning("タイトルを入力してください。")
+            return
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        row_data = [timestamp, handover_type, handover_title, handover_memo, "", "", ""]
+        try:
+            worksheet = gc.open(SPREADSHEET_NAME).worksheet(SHEET_HANDOVER_DATA)
+            worksheet.append_row(row_data)
+            st.success("✅ 引き継ぎメモをアップロードしました！")
+            st.cache_data.clear()
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ データ書き込みエラー: {e}")
+
+def page_handover_list():
+    detail_cols = [HANDOVER_COL_TIMESTAMP, HANDOVER_COL_TYPE, HANDOVER_COL_TITLE, '内容1', '内容2', '内容3', HANDOVER_COL_MEMO]
+    page_data_list(
+        sheet_name=SHEET_HANDOVER_DATA,
+        title="装置引き継ぎメモ",
+        col_time=HANDOVER_COL_TIMESTAMP,
+        col_filter=HANDOVER_COL_TYPE,
+        col_memo=HANDOVER_COL_TITLE,
+        col_url='内容1',
+        detail_cols=detail_cols,
+        col_filename=None
+    )
+
+def page_handover_note():
+    st.header("装置引き継ぎメモ機能")
+    st.markdown("---")
+    tab = st.radio("表示切替", ["📝 記録", "📚 一覧"], key="handover_tab", horizontal=True)
+    if tab == "📝 記録":
+        page_handover_recording()
+    else:
+        page_handover_list()
+
+# ---------------------------
+# --- トラブル報告ページ ---
+# ---------------------------
+def page_trouble_recording():
+    st.markdown("#### 🚨 新しいトラブルを報告")
+    DEVICE_OPTIONS = ["MBE", "XRD", "PL", "IV", "TEM・SEM", "抵抗加熱蒸着", "RTA", "フォトリソ", "ドラフター", "その他"]
+    with st.form(key='trouble_form'):
+        st.subheader("基本情報")
+        col1, col2 = st.columns(2)
+        with col1:
+            report_date = st.date_input(f"{TROUBLE_COL_OCCUR_DATE} (発生日)", datetime.now().date())
+        with col2:
+            device_to_save = st.selectbox(f"{TROUBLE_COL_DEVICE} (機器/場所)", DEVICE_OPTIONS, key='device_input')
+        report_title = st.text_input(f"{TROUBLE_COL_TITLE} (件名/タイトル) (必須)", key='trouble_title_input')
+        occur_time = st.text_area(f"{TROUBLE_COL_OCCUR_TIME} (状況詳細)", height=100)
+        st.subheader("対応と考察")
+        cause = st.text_area(f"{TROUBLE_COL_CAUSE} (原因/究明)", height=100)
+        solution = st.text_area(f"{TROUBLE_COL_SOLUTION} (対策/復旧)", height=100)
+        prevention = st.text_area(f"{TROUBLE_COL_PREVENTION} (再発防止策)", height=100)
+        col3, col4 = st.columns(2)
+        with col3:
+            reporter_name = st.text_input(f"{TROUBLE_COL_REPORTER} (報告者) (必須)", key='reporter_input')
+        with col4:
+            uploaded_files = st.file_uploader("添付ファイル", type=['jpg', 'jpeg', 'png', 'pdf', 'txt'], accept_multiple_files=True)
+        st.markdown("---")
+        submit_button = st.form_submit_button(label='トラブル報告を保存')
+    if submit_button:
+        if not report_title or not reporter_name:
+            st.warning("タイトルと報告者名を入力してください。")
+            return
+        filenames_list = []; urls_list = []
+        if uploaded_files:
+            with st.spinner("ファイルをGCSにアップロード中..."):
+                for file_obj in uploaded_files:
+                    filename, url = upload_file_to_gcs(storage_client, file_obj, "trouble_reports")
+                    if url:
+                        filenames_list.append(filename)
+                        urls_list.append(url)
+        filenames_json = json.dumps(filenames_list)
+        urls_json = json.dumps(urls_list)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        row_data = [timestamp, device_to_save, report_date.isoformat(), occur_time, cause, solution, prevention, reporter_name, filenames_json, urls_json, report_title]
+        try:
+            worksheet = gc.open(SPREADSHEET_NAME).worksheet(SHEET_TROUBLE_DATA)
+            worksheet.append_row(row_data)
+            st.success("✅ トラブル報告をアップロードしました！")
+            st.cache_data.clear()
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ データ書き込みエラー: {e}")
+
+def page_trouble_list():
+    detail_cols = [
+        TROUBLE_COL_TIMESTAMP, TROUBLE_COL_TITLE, TROUBLE_COL_DEVICE, TROUBLE_COL_OCCUR_DATE,
+        TROUBLE_COL_OCCUR_TIME, TROUBLE_COL_CAUSE, TROUBLE_COL_SOLUTION, TROUBLE_COL_PREVENTION,
+        TROUBLE_COL_REPORTER, TROUBLE_COL_FILENAME
+    ]
+    page_data_list(
+        sheet_name=SHEET_TROUBLE_DATA,
+        title="トラブル報告",
+        col_time=TROUBLE_COL_TIMESTAMP,
+        col_filter=TROUBLE_COL_DEVICE,
+        col_memo=TROUBLE_COL_TITLE,
+        col_url=TROUBLE_COL_FILE_URL,
+        detail_cols=detail_cols,
+        col_filename=TROUBLE_COL_FILENAME
+    )
+
+def page_trouble_report():
+    st.header("トラブル報告機能")
+    st.markdown("---")
+    tab = st.radio("表示切替", ["📝 記録", "📚 一覧"], key="trouble_tab", horizontal=True)
+    if tab == "📝 記録":
+        page_trouble_recording()
+    else:
+        page_trouble_list()
+
+# ---------------------------
+# --- 連絡・問い合わせページ ---
+# ---------------------------
+def page_contact_recording():
+    st.markdown("#### ✉️ 新しい問い合わせを記録")
+    with st.form(key='contact_form'):
+        contact_type = st.selectbox(f"{CONTACT_COL_TYPE}", ["バグ報告", "機能要望", "データ修正依頼", "その他"])
+        contact_detail = st.text_area(f"{CONTACT_COL_DETAIL}", height=150, key='contact_detail_input')
+        contact_info = st.text_input(f"{CONTACT_COL_CONTACT} (メールアドレスなど、任意)", key='contact_info_input')
+        st.markdown("---")
+        submit_button = st.form_submit_button(label='送信')
+    if submit_button:
+        if not contact_detail:
+            st.warning("詳細内容を入力してください。")
+            return
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        row_data = [timestamp, contact_type, contact_detail, contact_info]
+        try:
+            worksheet = gc.open(SPREADSHEET_NAME).worksheet(SHEET_CONTACT_DATA)
+            worksheet.append_row(row_data)
+            st.success("✅ お問い合わせを送信しました。")
+            st.cache_data.clear()
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ データ書き込みエラー: {e}")
+
+def page_contact_list():
+    detail_cols = [CONTACT_COL_TIMESTAMP, CONTACT_COL_TYPE, CONTACT_COL_DETAIL, CONTACT_COL_CONTACT]
+    page_data_list(
+        sheet_name=SHEET_CONTACT_DATA,
+        title="連絡・問い合わせ",
+        col_time=CONTACT_COL_TIMESTAMP,
+        col_filter=CONTACT_COL_TYPE,
+        col_memo=CONTACT_COL_DETAIL,
+        detail_cols=detail_cols
+    )
+
+def page_contact_form():
+    st.header("連絡・問い合わせ機能")
+    st.markdown("---")
+    tab = st.radio("表示切替", ["📝 記録", "📚 一覧"], key="contact_tab", horizontal=True)
+    if tab == "📝 記録":
+        page_contact_recording()
+    else:
+        page_contact_list()
+
+# ---------------------------
+# --- IVデータ解析ページ ---
+# ---------------------------
 def page_iv_analysis():
     st.header("⚡ IVデータ解析")
-    uploaded_files = st.file_uploader("IVデータ (.txt)", type=['txt'], accept_multiple_files=True)
+    uploaded_files = st.file_uploader("IV測定データファイル (.txt) をアップロード", type=['txt'], accept_multiple_files=True)
     if not uploaded_files:
         st.info("ファイルをアップロードしてください。")
         return
 
-    valid_dfs, names = [], []
-    for f in uploaded_files:
-        df = load_data_file(f.getvalue(), f.name)
+    valid_dataframes = []
+    filenames = []
+    st.subheader("ステップ1: ファイル読み込みと解析")
+    for uploaded_file in uploaded_files:
+        # load_data_file は bytes を受け取る (part1 で定義)
+        df = load_data_file(uploaded_file.getvalue(), uploaded_file.name)
         if df is not None and not df.empty:
-            valid_dfs.append(df)
-            names.append(f.name)
+            valid_dataframes.append(df)
+            filenames.append(uploaded_file.name)
 
-    if not valid_dfs:
-        st.warning("有効なファイルがありません。")
+    if not valid_dataframes:
+        st.warning("有効なデータファイルが見つかりませんでした。")
         return
 
-    combined_df = combine_dataframes(valid_dfs, names)
-    st.success(f"{len(valid_dfs)}件を結合しました。")
+    st.success(f"{len(valid_dataframes)} 個の有効なファイルを読み込みました。")
 
-    fig, ax = plt.subplots(figsize=(10,6))
-    for name in names:
-        ax.plot(combined_df['X_Axis'], combined_df[name], label=name)
+    st.subheader("ステップ2: 結合 (補間)")
+    combined_df = combine_dataframes(valid_dataframes, filenames)
+    if combined_df is None:
+        st.error("結合に失敗しました。データの形式を確認してください。")
+        return
+
+    st.subheader("ステップ3: グラフ表示")
+    fig, ax = plt.subplots(figsize=(12, 7))
+    for filename in filenames:
+        ax.plot(combined_df['X_Axis'], combined_df[filename], label=filename)
     ax.set_xlabel("電圧 (V)")
     ax.set_ylabel("電流 (A)")
-    ax.legend()
     ax.grid(True)
-    st.pyplot(fig)
+    ax.legend(title="ファイル名", loc='best')
+    ax.set_title("IV特性比較")
+    st.pyplot(fig, use_container_width=True)
 
-    st.dataframe(combined_df.head(), use_container_width=True)
+    st.subheader("ステップ4: 結合データ")
+    combined_df_display = combined_df.rename(columns={'X_Axis': 'Voltage_V'})
+    st.dataframe(combined_df_display.head(50), use_container_width=True)
+
+    # Excelダウンロード
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        combined_df.to_excel(writer, index=False, sheet_name="IV_combined")
-    st.download_button("💾 Excelダウンロード", output.getvalue(),
-                       f"iv_combined_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
+        combined_df_display.to_excel(writer, sheet_name='Combined IV Data', index=False)
+    st.download_button(
+        label="📈 結合Excelデータとしてダウンロード",
+        data=output.getvalue(),
+        file_name=f"iv_analysis_combined_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
+# ---------------------------
+# --- PLデータ解析ページ ---
+# ---------------------------
 def page_pl_analysis():
     st.header("🔬 PLデータ解析")
-    st.write("校正→スペクトル解析の2ステップで行います。")
+    st.write("ステップ1：波長校正（2点）→ ステップ2：測定データ解析 の順に実行してください。")
 
-    # --- Step 1 校正 ---
-    cal1_wl = st.number_input("基準波長1 (nm)", value=1500)
-    cal2_wl = st.number_input("基準波長2 (nm)", value=1570)
-    cal1_file = st.file_uploader(f"{cal1_wl} nm 校正ファイル", type=['txt'], key="cal1")
-    cal2_file = st.file_uploader(f"{cal2_wl} nm 校正ファイル", type=['txt'], key="cal2")
+    with st.expander("ステップ1：波長校正", expanded=True):
+        st.write("2つの基準波長の反射光データをアップロードして、分光器の傾き（nm/pixel）を校正します。")
+        col1, col2 = st.columns(2)
+        with col1:
+            cal1_wavelength = st.number_input("基準波長1 (nm)", value=1500)
+            cal1_file = st.file_uploader(f"{cal1_wavelength}nm の校正ファイル (.txt)", type=['txt'], key="pl_cal1")
+        with col2:
+            cal2_wavelength = st.number_input("基準波長2 (nm)", value=1570)
+            cal2_file = st.file_uploader(f"{cal2_wavelength}nm の校正ファイル (.txt)", type=['txt'], key="pl_cal2")
 
-    if st.button("校正実行"):
-        if cal1_file and cal2_file:
-            df1, df2 = load_pl_data(cal1_file), load_pl_data(cal2_file)
-            if df1 is not None and df2 is not None:
-                p1 = df1['pixel'].iloc[df1['intensity'].idxmax()]
-                p2 = df2['pixel'].iloc[df2['intensity'].idxmax()]
-                slope = (cal2_wl - cal1_wl) / (p1 - p2)
-                st.session_state['pl_slope'] = slope
-                st.session_state['pl_calibrated'] = True
-                st.success(f"校正完了: {slope:.4f} nm/pixel")
+        if st.button("校正を実行", key="run_pl_calibration"):
+            if cal1_file and cal2_file:
+                df1 = load_pl_data(cal1_file)
+                df2 = load_pl_data(cal2_file)
+                if df1 is not None and df2 is not None:
+                    try:
+                        peak_pixel1 = int(df1['pixel'].iloc[df1['intensity'].idxmax()])
+                        peak_pixel2 = int(df2['pixel'].iloc[df2['intensity'].idxmax()])
+                        if peak_pixel1 == peak_pixel2:
+                            st.error("2つのピーク位置が同じです。異なる校正ファイルを選択してください。")
+                        else:
+                            delta_wave = float(cal2_wavelength - cal1_wavelength)
+                            delta_pixel = float(peak_pixel1 - peak_pixel2)
+                            slope = delta_wave / delta_pixel
+                            st.session_state['pl_calibrated'] = True
+                            st.session_state['pl_slope'] = slope
+                            st.session_state['pl_center_wl_cal'] = cal1_wavelength
+                            st.session_state['pl_center_pixel_cal'] = peak_pixel1
+                            st.success(f"✅ 校正係数を保存しました：{slope:.6f} nm/pixel")
+                    except Exception as e:
+                        st.error(f"校正中にエラーが発生しました: {e}")
+                else:
+                    st.error("校正ファイルのデータ読み込みに失敗しました。ファイル形式を確認してください。")
             else:
-                st.error("校正ファイルのデータ読み込みに失敗しました。")
-        else:
-            st.warning("2つの校正ファイルを指定してください。")
+                st.warning("両方の校正ファイルをアップロードしてください。")
 
     st.write("---")
     st.subheader("ステップ2：測定データ解析")
 
-    if not st.session_state.get('pl_calibrated', False):
-        st.info("💡 まず校正を完了してください。")
+    if 'pl_calibrated' not in st.session_state or not st.session_state['pl_calibrated']:
+        st.info("💡 まずステップ1の波長校正を完了させてください。")
         return
 
-    center_wl = st.number_input("測定時の中心波長 (nm)", value=1700)
-    uploaded_files = st.file_uploader("PL測定データ (.txt)", type=['txt'], accept_multiple_files=True)
+    center_wavelength_input = st.number_input(
+        "測定時の中心波長 (nm)", min_value=0, value=1700, step=10,
+        help="この測定で装置に設定した中心波長を入力してください。"
+    )
+    uploaded_files = st.file_uploader("測定データファイル（複数選択可）をアップロード", type=['txt'], accept_multiple_files=True)
+
     if not uploaded_files:
+        st.info("測定データファイルをアップロードしてください。")
         return
 
+    st.subheader("解析結果")
+    fig, ax = plt.subplots(figsize=(10, 6))
+    all_dataframes = []
     slope = st.session_state['pl_slope']
     center_pixel = 256.5
 
-    fig, ax = plt.subplots(figsize=(10,6))
-    merged = None
-    for f in uploaded_files:
-        df = load_pl_data(f)
-        if df is None: continue
-        df['wavelength_nm'] = (df['pixel'] - center_pixel) * slope + center_wl
-        ax.plot(df['wavelength_nm'], df['intensity'], label=f.name)
-        df = df[['wavelength_nm', 'intensity']].rename(columns={'intensity': f.name})
-        merged = df if merged is None else pd.merge(merged, df, on='wavelength_nm', how='outer')
+    for uploaded_file in uploaded_files:
+        df = load_pl_data(uploaded_file)
+        if df is not None:
+            df['wavelength_nm'] = (df['pixel'] - center_pixel) * slope + center_wavelength_input
+            base_name = uploaded_file.name.rsplit('.', 1)[0]
+            cleaned_label = base_name.replace(str(int(center_wavelength_input)), "").strip(' _-')
+            label = cleaned_label if cleaned_label else base_name
+            ax.plot(df['wavelength_nm'], df['intensity'], label=label, linewidth=2.0)
+            export_df = df[['wavelength_nm', 'intensity']].copy()
+            export_df.rename(columns={'intensity': base_name}, inplace=True)
+            all_dataframes.append(export_df)
 
-    ax.set_xlabel("波長 (nm)")
-    ax.set_ylabel("PL強度 (a.u.)")
-    ax.legend()
-    ax.grid(True)
-    st.pyplot(fig)
-    if merged is not None:
-        merged = merged.sort_values('wavelength_nm')
+    if all_dataframes:
+        final_df = all_dataframes[0].rename(columns={'wavelength_nm': 'wavelength_nm'})
+        for i in range(1, len(all_dataframes)):
+            final_df = pd.merge(final_df, all_dataframes[i], on='wavelength_nm', how='outer')
+        final_df = final_df.sort_values(by='wavelength_nm').reset_index(drop=True)
+        ax.set_title(f"PL spectrum (Center: {center_wavelength_input} nm)")
+        ax.set_xlabel("Wavelength [nm]"); ax.set_ylabel("PL intensity [a.u.]")
+        ax.legend(loc='upper left', frameon=False, fontsize=10)
+        ax.grid(axis='y', linestyle='-', color='lightgray', zorder=0)
+        ax.tick_params(direction='in', top=True, right=True, which='both')
+        st.pyplot(fig, use_container_width=True)
+
+        # Excelダウンロード
         output = BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            merged.to_excel(writer, index=False, sheet_name="PL_combined")
-        st.download_button("📊 Excelダウンロード", output.getvalue(),
-                           f"pl_combined_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
+            final_df.to_excel(writer, index=False, sheet_name='Combined PL Data')
+        st.download_button(label="📈 Excelデータとしてダウンロード", data=output.getvalue(),
+                           file_name=f"pl_analysis_combined_{center_wavelength_input}nm_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    else:
+        st.warning("有効なデータファイルが見つかりませんでした。")
 
-# --------------------------------------------------------------------------
+# ---------------------------
+# --- 未実装/簡易ページ（カレンダー等） ---
+# ---------------------------
+def page_calendar():
+    st.header("🗓️ スケジュール・装置予約")
+    st.info("このページは簡易実装です。必要であれば予約システムと連携可能です。")
+
+# ---------------------------
 # --- メインルーティング ---
-# --------------------------------------------------------------------------
+# ---------------------------
 def main():
     st.sidebar.title("山根研 ツールキット")
-    menu = st.sidebar.radio("機能選択", [
+    menu_selection = st.sidebar.radio("機能選択", [
         "エピノート",
         "メンテノート",
         "⚡ IVデータ解析",
@@ -285,12 +1057,29 @@ def main():
         "🗓️ スケジュール・装置予約"
     ])
 
-    if menu == "⚡ IVデータ解析":
+    if menu_selection == "エピノート":
+        page_epi_note()
+    elif menu_selection == "メンテノート":
+        page_mainte_note()
+    elif menu_selection == "⚡ IVデータ解析":
         page_iv_analysis()
-    elif menu == "🔬 PLデータ解析":
+    elif menu_selection == "🔬 PLデータ解析":
         page_pl_analysis()
+    elif menu_selection == "議事録":
+        page_meeting_note()
+    elif menu_selection == "知恵袋・質問箱":
+        page_qa_box()
+    elif menu_selection == "装置引き継ぎメモ":
+        page_handover_note()
+    elif menu_selection == "トラブル報告":
+        page_trouble_report()
+    elif menu_selection == "連絡・問い合わせ":
+        page_contact_form()
+    elif menu_selection == "🗓️ スケジュール・装置予約":
+        page_calendar()
     else:
-        st.info("この機能は現在省略しています（既存バージョンから流用可能）。")
+        st.info("選択した機能は未実装です。")
 
 if __name__ == "__main__":
     main()
+
