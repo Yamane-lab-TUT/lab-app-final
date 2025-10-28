@@ -269,27 +269,24 @@ def load_pl_data(uploaded_file):
         return df[['pixel', 'intensity']]
     return None
 
-@st.cache_data(show_spinner="データを結合中...")
-def combine_dataframes(dataframes, filenames):
-    """複数のDataFrameを共通のX軸をキーに外部結合する"""
-    if not dataframes: return None
-    
-    # 結合キーは 'X_Value' (load_data_fileの出力に合わせる)
-    combined_df = dataframes[0].rename(columns={'Axis_X': 'X_Value'})
-    
-    for i in range(1, len(dataframes)):
-        df_to_merge = dataframes[i].rename(columns={'Axis_X': 'X_Value'})
-        combined_df = pd.merge(combined_df, df_to_merge, on='X_Value', how='outer')
-        
-    combined_df = combined_df.sort_values(by='X_Value', ascending=False).reset_index(drop=True)
-    
-    for col in combined_df.columns:
-        if col != 'X_Value':
-            combined_df[col] = combined_df[col].round(4)
-            
-    # X軸の列名を結合前に戻す
-    combined_df = combined_df.rename(columns={'X_Value': 'X_Axis'})
-    
+# --- IVデータ解析用 結合関数（改良版・補間付き） ---
+@st.cache_data(show_spinner="データを結合中...", max_entries=50)
+def combine_dataframes(dataframes, filenames, num_points=500):
+    """複数のIVデータを共通電圧軸で線形補間して結合（滑らかで欠損なし）"""
+    if not dataframes:
+        return None
+
+    # 全てのVoltage軸から範囲を抽出
+    all_x = np.concatenate([df['Axis_X'].values for df in dataframes])
+    x_common = np.linspace(all_x.min(), all_x.max(), num_points)
+
+    combined_df = pd.DataFrame({'X_Axis': x_common})
+
+    for df, name in zip(dataframes, filenames):
+        df_sorted = df.sort_values('Axis_X')
+        y_interp = np.interp(x_common, df_sorted['Axis_X'], df_sorted.iloc[:, 1])
+        combined_df[name] = y_interp
+
     return combined_df
 
 
@@ -1151,3 +1148,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
