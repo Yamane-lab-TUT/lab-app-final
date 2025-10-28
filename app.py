@@ -1,9 +1,11 @@
 # --------------------------------------------------------------------------
 # Yamane Lab Convenience Tool - Streamlit Application (app.py)
 #
-# v20.4.0 (認証・キャッシュエラー修正版)
-# - FIX: 認証文字列のJSONパース処理を強化 (v20.3.0)
-# - FIX: get_sheet_as_dfのキャッシュエラー (UnhashableParamError) を修正
+# v20.5.0 (最終機能統合・日本語対応版)
+# - FIX: 機能メニューを記録・一覧で統合 (例: エピノート)
+# - FIX: 一覧のデフォルト開始日を 2025年4月1日 に変更
+# - ADD: PLデータ解析ページを実装
+# - ADD: Matplotlibによるグラフの日本語表示に対応
 # --------------------------------------------------------------------------
 
 import streamlit as st
@@ -18,14 +20,18 @@ from datetime import datetime, date, timedelta
 from urllib.parse import quote as url_quote
 from io import BytesIO
 import calendar
+import matplotlib.font_manager as fm
 
-# Google API client libraries
-from google.oauth2.service_account import Credentials
-from googleapiclient.discovery import build
-from google.cloud import storage
-from google.auth.exceptions import DefaultCredentialsError
-from google.api_core import exceptions
-
+# --- Matplotlib 日本語フォント設定 ---
+# Streamlit Cloud環境で動作する可能性の高いフォントを設定
+try:
+    # 環境依存で動作しない可能性もあるため、広範囲のフォントを指定
+    plt.rcParams['font.family'] = 'sans-serif'
+    plt.rcParams['font.sans-serif'] = ['Hiragino Maru Gothic Pro', 'Yu Gothic', 'Meiryo', 'TakaoGothic', 'IPAexGothic', 'IPAfont', 'Noto Sans CJK JP']
+    plt.rcParams['axes.unicode_minus'] = False # 負の記号の豆腐化防止
+except Exception:
+    pass # 設定に失敗しても続行
+    
 # --- Global Configuration & Setup ---
 st.set_page_config(page_title="山根研 便利屋さん", layout="wide")
 
@@ -133,17 +139,10 @@ def initialize_google_services():
         raw_credentials_string = st.secrets["gcs_credentials"]
         
         # --- 認証文字列の【強制】クリーンアップ v20.3.0 ---
-        # 1. 冒頭と末尾の不要な空白（改行、タブなど）を除去
         cleaned_string = raw_credentials_string.strip()
-        
-        # 2. JSON内部の改行とタブ文字、全角スペースと誤認されやすい文字を完全に除去
-        # これにより、三重引用符内のインデントや改行によるパースエラーをほぼ確実に排除します。
         cleaned_string = cleaned_string.replace('\n', '')
         cleaned_string = cleaned_string.replace('\t', '')
-        # U+00A0: NO-BREAK SPACE (全角スペースと誤認されやすい文字)を除去
-        cleaned_string = cleaned_string.replace(' ', '') 
-        
-        # 最後に連続するスペースを一つに置換 (JSONの構造を壊さない範囲で)
+        cleaned_string = cleaned_string.replace(' ', '') # U+00A0: NO-BREAK SPACE
         cleaned_string = re.sub(r'(\s){2,}', r'\1', cleaned_string)
         
         # JSONをパース
@@ -159,12 +158,10 @@ def initialize_google_services():
         return gc_real, storage_client_real
 
     except json.JSONDecodeError as e:
-        # JSONパースエラーが発生した場合
-        st.error(f"❌ 認証エラー（JSON形式不正）: サービスアカウントのJSON形式が不正です。secrets.toml の値が、正しいJSON文字列であることを確認してください。エラー詳細: {e}")
+        st.error(f"❌ 認証エラー（JSON形式不正）: サービスアカウントのJSON形式が不正です。エラー詳細: {e}")
         return DummyGSClient(), DummyStorageClient()
         
     except Exception as e:
-        # その他の認証エラー（権限不足など）
         st.error(f"❌ 認証エラー: サービスアカウントの初期化に失敗しました。認証情報をご確認ください。({e})")
         return DummyGSClient(), DummyStorageClient()
 
@@ -175,7 +172,6 @@ gc, storage_client = initialize_google_services()
 # --- Data Utilities (データ取得・解析) ---
 # --------------------------------------------------------------------------
 
-# ★★★ 修正箇所: get_sheet_as_df から gc を引数として削除 ★★★
 @st.cache_data(ttl=600, show_spinner="スプレッドシートからデータを読み込み中...")
 def get_sheet_as_df(spreadsheet_name, sheet_name):
     """指定されたシートのデータをDataFrameとして取得する"""
@@ -187,10 +183,9 @@ def get_sheet_as_df(spreadsheet_name, sheet_name):
     try:
         worksheet = gc.open(spreadsheet_name).worksheet(sheet_name)
         data = worksheet.get_all_values()
-        if not data or len(data) <= 1: # ヘッダーのみの場合も空とみなす
+        if not data or len(data) <= 1: 
             return pd.DataFrame(columns=data[0] if data else [])
         
-        # 1行目をヘッダーとしてDataFrameを作成
         df = pd.DataFrame(data[1:], columns=data[0])
         return df
 
@@ -198,13 +193,13 @@ def get_sheet_as_df(spreadsheet_name, sheet_name):
         st.error(f"シート名「{sheet_name}」が見つかりません。スプレッドシートをご確認ください。")
         return pd.DataFrame()
     except Exception as e:
-        st.warning(f"警告：シート「{sheet_name}」の読み込み中にエラーが発生しました。ヘッダーの不一致やデータ形式を確認してください。({e})")
+        st.warning(f"警告：シート「{sheet_name}」の読み込み中にエラーが発生しました。({e})")
         return pd.DataFrame()
 
-# --- IVデータ解析用ユーティリティ (キャッシュで高速化) ---
-@st.cache_data(show_spinner="IVデータを解析中...", max_entries=50)
-def load_iv_data(uploaded_file_bytes, uploaded_file_name):
-    """アップロードされたIVファイルを読み込み、DataFrameを返す"""
+# --- IV/PLデータ解析用ユーティリティ (キャッシュで高速化) ---
+@st.cache_data(show_spinner="データを解析中...", max_entries=50)
+def load_data_file(uploaded_file_bytes, uploaded_file_name):
+    """アップロードされたIV/PLファイルを読み込み、DataFrameを返す (IV/PL共通ロジック)"""
     try:
         content = uploaded_file_bytes.decode('utf-8').splitlines()
         data_lines = content[1:] 
@@ -219,6 +214,7 @@ def load_iv_data(uploaded_file_bytes, uploaded_file_name):
 
         data_string_io = io.StringIO("\n".join(cleaned_data_lines))
         
+        # 複数の区切り文字を試すロバストな読み込み
         try:
             df = pd.read_csv(data_string_io, sep=r'\s+', engine='python', header=None, skipinitialspace=True)
         except Exception:
@@ -232,9 +228,9 @@ def load_iv_data(uploaded_file_bytes, uploaded_file_name):
         if df is None or len(df.columns) < 2: return None
         
         df = df.iloc[:, :2]
-        df.columns = ['Voltage_V', uploaded_file_name] 
+        df.columns = ['Axis_X', uploaded_file_name] # 一時的に汎用的な列名を使用
 
-        df['Voltage_V'] = pd.to_numeric(df['Voltage_V'], errors='coerce', downcast='float')
+        df['Axis_X'] = pd.to_numeric(df['Axis_X'], errors='coerce', downcast='float')
         df[uploaded_file_name] = pd.to_numeric(df[uploaded_file_name], errors='coerce', downcast='float')
         df.dropna(inplace=True)
         
@@ -244,23 +240,28 @@ def load_iv_data(uploaded_file_bytes, uploaded_file_name):
         return None
 
 @st.cache_data(show_spinner="データを結合中...")
-def combine_iv_dataframes(dataframes, filenames):
-    """複数のIV DataFrameをVoltage_Vをキーに外部結合する"""
+def combine_dataframes(dataframes, filenames):
+    """複数のDataFrameを共通のX軸をキーに外部結合する"""
     if not dataframes: return None
     
-    combined_df = dataframes[0]
+    # 結合キーは 'Axis_X'
+    combined_df = dataframes[0].rename(columns={'Axis_X': 'X_Value'})
     
     for i in range(1, len(dataframes)):
-        df_to_merge = dataframes[i]
-        combined_df = pd.merge(combined_df, df_to_merge, on='Voltage_V', how='outer')
+        df_to_merge = dataframes[i].rename(columns={'Axis_X': 'X_Value'})
+        combined_df = pd.merge(combined_df, df_to_merge, on='X_Value', how='outer')
         
-    combined_df = combined_df.sort_values(by='Voltage_V', ascending=False).reset_index(drop=True)
+    combined_df = combined_df.sort_values(by='X_Value', ascending=False).reset_index(drop=True)
     
     for col in combined_df.columns:
-        if col != 'Voltage_V':
+        if col != 'X_Value':
             combined_df[col] = combined_df[col].round(4)
             
-    return combined_df
+    # X軸の列名を結合前に戻す
+    combined_df = combined_df.rename(columns={'X_Value': dataframes[0].columns[0]})
+    
+    return combined_df.rename(columns={dataframes[0].columns[0]: 'X_Axis'})
+
 
 # --------------------------------------------------------------------------
 # --- GCS Utilities (ファイルアップロード) ---
@@ -273,7 +274,6 @@ def upload_file_to_gcs(storage_client, file_obj, folder_name):
         
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     original_filename = file_obj.name
-    # ファイル名が日本語の場合に備え、URLエンコードを考慮してスペース等をアンダースコアに置換（GCSのblob名はURLエンコードされないため）
     safe_filename = original_filename.replace(' ', '_').replace('/', '_')
     gcs_filename = f"{folder_name}/{timestamp}_{safe_filename}"
 
@@ -284,13 +284,12 @@ def upload_file_to_gcs(storage_client, file_obj, folder_name):
         file_obj.seek(0)
         blob.upload_from_file(file_obj, content_type=file_obj.type)
 
-        # 署名付きURLではなく、よりシンプルな公開URLを生成（バケットの権限設定に依存）
         public_url = f"https://storage.googleapis.com/{CLOUD_STORAGE_BUCKET_NAME}/{url_quote(gcs_filename)}"
         
         return original_filename, public_url
 
     except Exception as e:
-        st.error(f"❌ GCSエラー: ファイルのアップロード中にエラーが発生しました。バケット名 '{CLOUD_STORAGE_BUCKET_NAME}' が正しいか、権限があるか確認してください。({e})")
+        st.error(f"❌ GCSエラー: ファイルのアップロード中にエラーが発生しました。({e})")
         return None, None
         
 # --------------------------------------------------------------------------
@@ -301,8 +300,8 @@ def upload_file_to_gcs(storage_client, file_obj, folder_name):
 def page_data_list(sheet_name, title, col_time, col_filter=None, col_memo=None, col_url=None, detail_cols=None):
     """汎用的なデータ一覧ページ"""
     
-    st.header(title)
-    # ★★★ 修正箇所: get_sheet_as_df の呼び出しから gc の引数を削除 ★★★
+    st.header(f"📚 {title}一覧")
+    
     df = get_sheet_as_df(SPREADSHEET_NAME, sheet_name) 
 
     if df.empty: st.info("データがありません。"); return
@@ -319,10 +318,8 @@ def page_data_list(sheet_name, title, col_time, col_filter=None, col_memo=None, 
     # 日付による絞り込み
     if col_time and col_time in df.columns:
         try:
-            # タイムスタンプ列を日付型に変換
-            df[col_time] = pd.to_datetime(df[col_time].str.replace(r'[^0-9]', '', regex=True), errors='coerce', format='%Y%m%d%H%M%S', exact=False).dt.date
+            df[col_time] = pd.to_datetime(df[col_time].astype(str).str.replace(r'[^0-9]', '', regex=True), errors='coerce', format='%Y%m%d%H%M%S', exact=False).dt.date
         except:
-            # 日付形式が不正な場合は、そのまま処理
             pass 
         
         df_valid_date = df.dropna(subset=[col_time])
@@ -331,9 +328,19 @@ def page_data_list(sheet_name, title, col_time, col_filter=None, col_memo=None, 
             min_date = df_valid_date[col_time].min()
             max_date = df_valid_date[col_time].max()
             
+            # --- ★修正箇所: デフォルト開始日を2025年4月1日に設定 ★---
+            try:
+                default_start_date = date(2025, 4, 1)
+            except ValueError:
+                default_start_date = date.today() - timedelta(days=365) # 安全策
+                
+            # 実際の日付の最小値と、指定されたデフォルト開始日のうち、新しい方を選択
+            initial_start_date = max(min_date, default_start_date) if isinstance(min_date, date) else default_start_date
+            # ----------------------------------------------------
+            
             col_date1, col_date2 = st.columns(2)
             with col_date1:
-                start_date = st.date_input("開始日", value=max(min_date, datetime.now().date() - timedelta(days=30)))
+                start_date = st.date_input("開始日", value=initial_start_date)
             with col_date2:
                 end_date = st.date_input("終了日", value=max_date)
             
@@ -349,7 +356,6 @@ def page_data_list(sheet_name, title, col_time, col_filter=None, col_memo=None, 
     st.markdown("---")
     st.subheader(f"検索結果 ({len(df)}件)")
 
-    # 選択肢のフォーマット関数
     def format_func(idx):
         row = df.loc[idx]
         time_str = str(row[col_time])
@@ -368,11 +374,10 @@ def page_data_list(sheet_name, title, col_time, col_filter=None, col_memo=None, 
         row = df.loc[selected_index]
         st.markdown(f"#### 選択された記録 (ID: {selected_index+1})")
         
-        # 主要情報と詳細情報を表示
         if detail_cols:
             for col in detail_cols:
                 if col in row:
-                    if col_memo == col:
+                    if col_memo == col or '内容' in col: # メモや内容が多い場合はテキストエリアで表示
                         st.markdown(f"**{col}:**"); st.text(row[col])
                     else:
                         st.write(f"**{col}:** {row[col]}")
@@ -387,7 +392,6 @@ def page_data_list(sheet_name, title, col_time, col_filter=None, col_memo=None, 
                 filenames = json.loads(row[EPI_COL_FILENAME]) if EPI_COL_FILENAME in row and row[EPI_COL_FILENAME] else ['ファイル'] * len(urls)
                 
                 if urls:
-                    # リストとして処理
                     for filename, url in zip(filenames, urls):
                         if "drive.google.com" in url:
                             st.markdown(f"- **Google Drive:** [{filename}](<{url}>)")
@@ -399,23 +403,23 @@ def page_data_list(sheet_name, title, col_time, col_filter=None, col_memo=None, 
             except Exception:
                 # JSON形式ではない場合（古いデータや手動入力、単一URLの直接保存）
                 if pd.notna(row[col_url]) and row[col_url]:
-                    # 単一のURLまたはカンマ区切りのURLとして扱う
                     url_list = row[col_url].split(',')
                     for url in url_list:
-                         url = url.strip().strip('"') # 余計な空白や引用符を除去
+                         url = url.strip().strip('"')
                          if url:
                              st.markdown(f"- [添付ファイルURL]({url})")
                 else:
                     st.info("添付ファイルはありません。")
 
 
-# --- 1. エピノート記録/一覧 ---
+# --- 機能統合されたページ実装 ---
+
+# 1. エピノート機能
 def page_epi_note_recording():
-    st.header("📝 エピノート記録")
-    st.markdown("---")
+    st.markdown("#### 📝 新しいエピノートを記録")
+    # ... (既存の記録ロジックをここに記述) ...
     
     with st.form(key='epi_note_form'):
-        
         col1, col2 = st.columns(2)
         with col1:
             ep_category = st.text_input(f"{EPI_COL_CATEGORY} (例: D1, 784-A)", key='ep_category_input')
@@ -463,19 +467,27 @@ def page_epi_note_list():
     detail_cols = [EPI_COL_TIMESTAMP, EPI_COL_CATEGORY, EPI_COL_NOTE_TYPE, EPI_COL_MEMO, EPI_COL_FILENAME]
     page_data_list(
         sheet_name=SHEET_EPI_DATA,
-        title="📚 エピノート一覧",
+        title="エピノート",
         col_time=EPI_COL_TIMESTAMP,
         col_filter=EPI_COL_CATEGORY,
         col_memo=EPI_COL_MEMO,
         col_url=EPI_COL_FILE_URL,
         detail_cols=detail_cols
     )
-
-# --- 2. メンテノート記録/一覧 ---
-def page_mainte_recording():
-    st.header("🛠️ メンテノート記録")
-    st.markdown("---")
     
+def page_epi_note():
+    st.header("エピノート機能")
+    st.markdown("---")
+    tab_selection = st.radio("表示切り替え", ["📝 記録", "📚 一覧"], key="epi_tab", horizontal=True)
+    
+    if tab_selection == "📝 記録": page_epi_note_recording()
+    elif tab_selection == "📚 一覧": page_epi_note_list()
+
+
+# 2. メンテノート機能
+def page_mainte_recording():
+    st.markdown("#### 🛠️ 新しいメンテノートを記録")
+    # ... (既存の記録ロジックをここに記述) ...
     with st.form(key='mainte_note_form'):
         
         mainte_type = st.selectbox(f"{MAINT_COL_MEMO} (装置/内容)", [
@@ -522,20 +534,27 @@ def page_mainte_list():
     detail_cols = [MAINT_COL_TIMESTAMP, MAINT_COL_NOTE_TYPE, MAINT_COL_MEMO, MAINT_COL_FILENAME]
     page_data_list(
         sheet_name=SHEET_MAINTE_DATA,
-        title="🛠️ メンテノート一覧",
+        title="メンテノート",
         col_time=MAINT_COL_TIMESTAMP,
         col_filter=MAINT_COL_NOTE_TYPE, 
         col_memo=MAINT_COL_MEMO,
         col_url=MAINT_COL_FILE_URL,
         detail_cols=detail_cols
     )
-    
-# --- 3. 議事録・ミーティングメモ記録/一覧 ---
-def page_meeting_recording():
-    st.header("📝 議事録記録")
-    st.info("※ 録音機能は未実装のため、手動でURLをペーストしてください。")
-    st.markdown("---")
 
+def page_mainte_note():
+    st.header("メンテノート機能")
+    st.markdown("---")
+    tab_selection = st.radio("表示切り替え", ["📝 記録", "📚 一覧"], key="mainte_tab", horizontal=True)
+    
+    if tab_selection == "📝 記録": page_mainte_recording()
+    elif tab_selection == "📚 一覧": page_mainte_list()
+
+
+# 3. 議事録・ミーティングメモ機能
+def page_meeting_recording():
+    st.markdown("#### 📝 新しい議事録を記録")
+    # ... (既存の記録ロジックをここに記述) ...
     with st.form(key='meeting_form'):
         meeting_title = st.text_input(f"{MEETING_COL_TITLE} (例: 2025-10-28 定例会議)", key='meeting_title_input')
         meeting_content = st.text_area(f"{MEETING_COL_CONTENT}", height=300, key='meeting_content_input')
@@ -570,7 +589,7 @@ def page_meeting_list():
     detail_cols = [MEETING_COL_TIMESTAMP, MEETING_COL_TITLE, MEETING_COL_CONTENT, MEETING_COL_AUDIO_NAME, MEETING_COL_AUDIO_URL]
     page_data_list(
         sheet_name=SHEET_MEETING_DATA,
-        title="📚 議事録一覧",
+        title="議事録",
         col_time=MEETING_COL_TIMESTAMP,
         col_filter=MEETING_COL_TITLE,
         col_memo=MEETING_COL_CONTENT,
@@ -578,11 +597,19 @@ def page_meeting_list():
         detail_cols=detail_cols
     )
 
-# --- 4. 知恵袋・質問箱（質問のみ実装）---
-def page_qa_recording():
-    st.header("💡 知恵袋・質問箱 (質問投稿)")
+def page_meeting_note():
+    st.header("議事録・ミーティングメモ機能")
     st.markdown("---")
+    tab_selection = st.radio("表示切り替え", ["📝 記録", "📚 一覧"], key="meeting_tab", horizontal=True)
     
+    if tab_selection == "📝 記録": page_meeting_recording()
+    elif tab_selection == "📚 一覧": page_meeting_list()
+
+
+# 4. 知恵袋・質問箱機能
+def page_qa_recording():
+    st.markdown("#### 💡 新しい質問を投稿")
+    # ... (既存の記録ロジックをここに記述) ...
     with st.form(key='qa_form'):
         qa_title = st.text_input(f"{QA_COL_TITLE} (例: XRDの測定手順について)", key='qa_title_input')
         qa_content = st.text_area(f"{QA_COL_CONTENT}", height=200, key='qa_content_input')
@@ -629,7 +656,7 @@ def page_qa_list():
     detail_cols = [QA_COL_TIMESTAMP, QA_COL_TITLE, QA_COL_CONTENT, QA_COL_CONTACT, QA_COL_STATUS, QA_COL_FILENAME]
     page_data_list(
         sheet_name=SHEET_QA_DATA,
-        title="💡 知恵袋・質問箱 (質問一覧)",
+        title="知恵袋・質問箱",
         col_time=QA_COL_TIMESTAMP,
         col_filter=QA_COL_STATUS, 
         col_memo=QA_COL_CONTENT,
@@ -638,11 +665,19 @@ def page_qa_list():
     )
     st.info("※ 回答の閲覧機能は現在開発中です。")
 
-# --- 5. 装置引き継ぎメモ記録/一覧 ---
-def page_handover_recording():
-    st.header("🤝 装置引き継ぎメモ記録")
+def page_qa_box():
+    st.header("知恵袋・質問箱機能")
     st.markdown("---")
+    tab_selection = st.radio("表示切り替え", ["💡 質問投稿", "📚 質問一覧"], key="qa_tab", horizontal=True)
     
+    if tab_selection == "💡 質問投稿": page_qa_recording()
+    elif tab_selection == "📚 質問一覧": page_qa_list()
+
+
+# 5. 装置引き継ぎメモ機能
+def page_handover_recording():
+    st.markdown("#### 🤝 新しい引き継ぎメモを記録")
+    # ... (既存の記録ロジックをここに記述) ...
     with st.form(key='handover_form'):
         
         handover_type = st.selectbox(f"{HANDOVER_COL_TYPE} (カテゴリ)", ["マニュアル", "装置設定", "その他メモ"])
@@ -659,8 +694,7 @@ def page_handover_recording():
             
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # ユーザーのシート構造: ['タイムスタンプ', '種類', 'タイトル', '内容1', '内容2', '内容3', 'メモ']
-        # 既存のデータと整合性を保つため、「内容1」に詳細メモを入れます。
+        # 既存のシート構造に合わせる（内容1, 2, 3は空にし、メモに集約）
         row_data = [
             timestamp, handover_type, handover_title, 
             handover_memo, "", "", ""
@@ -677,62 +711,27 @@ def page_handover_list():
     detail_cols = [HANDOVER_COL_TIMESTAMP, HANDOVER_COL_TYPE, HANDOVER_COL_TITLE, '内容1', '内容2', '内容3', HANDOVER_COL_MEMO]
     page_data_list(
         sheet_name=SHEET_HANDOVER_DATA,
-        title="🤝 装置引き継ぎメモ一覧",
+        title="装置引き継ぎメモ",
         col_time=HANDOVER_COL_TIMESTAMP,
         col_filter=HANDOVER_COL_TYPE,
         col_memo=HANDOVER_COL_TITLE,
-        col_url='内容1', # ユーザーのシートでは「内容1」にリンクが保存されているケースがあるため
+        col_url='内容1', 
         detail_cols=detail_cols
     )
-    
-# --- 6. お問い合わせフォーム（記録のみ実装）---
-def page_contact_recording():
-    st.header("✉️ 連絡・問い合わせフォーム")
+
+def page_handover_note():
+    st.header("装置引き継ぎメモ機能")
     st.markdown("---")
+    tab_selection = st.radio("表示切り替え", ["📝 記録", "📚 一覧"], key="handover_tab", horizontal=True)
     
-    with st.form(key='contact_form'):
-        
-        contact_type = st.selectbox(f"{CONTACT_COL_TYPE}", ["バグ報告", "機能要望", "データ修正依頼", "その他"])
-        contact_detail = st.text_area(f"{CONTACT_COL_DETAIL}", height=150, key='contact_detail_input')
-        contact_info = st.text_input(f"{CONTACT_COL_CONTACT} (メールアドレスなど、任意)", key='contact_info_input')
-        
-        st.markdown("---")
-        submit_button = st.form_submit_button(label='送信')
+    if tab_selection == "📝 記録": page_handover_recording()
+    elif tab_selection == "📚 一覧": page_handover_list()
 
-    if submit_button:
-        if not contact_detail:
-            st.warning("詳細内容を入力してください。")
-            return
-            
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        row_data = [
-            timestamp, contact_type, contact_detail, contact_info
-        ]
-        
-        try:
-            worksheet = gc.open(SPREADSHEET_NAME).worksheet(SHEET_CONTACT_DATA)
-            worksheet.append_row(row_data)
-            st.success("お問い合わせを送信しました。担当者から折り返し連絡いたします。"); st.cache_data.clear(); st.rerun() 
-        except Exception:
-            st.error(f"データの書き込み中にエラーが発生しました。シート名 '{SHEET_CONTACT_DATA}' が存在するか確認してください。")
 
-def page_contact_list():
-    detail_cols = [CONTACT_COL_TIMESTAMP, CONTACT_COL_TYPE, CONTACT_COL_DETAIL, CONTACT_COL_CONTACT]
-    page_data_list(
-        sheet_name=SHEET_CONTACT_DATA,
-        title="✉️ 連絡・問い合わせ一覧",
-        col_time=CONTACT_COL_TIMESTAMP,
-        col_filter=CONTACT_COL_TYPE,
-        col_memo=CONTACT_COL_DETAIL,
-        detail_cols=detail_cols
-    )
-
-# --- 7. トラブル報告記録/一覧 ---
+# 6. トラブル報告機能
 def page_trouble_recording():
-    st.header("🚨 トラブル報告記録")
-    st.markdown("---")
-    
+    st.markdown("#### 🚨 新しいトラブルを報告")
+    # ... (既存の記録ロジックをここに記述) ...
     with st.form(key='trouble_form'):
         
         st.subheader("基本情報")
@@ -798,7 +797,7 @@ def page_trouble_list():
     ]
     page_data_list(
         sheet_name=SHEET_TROUBLE_DATA,
-        title="🚨 トラブル報告一覧",
+        title="トラブル報告",
         col_time=TROUBLE_COL_TIMESTAMP,
         col_filter=TROUBLE_COL_DEVICE,
         col_memo=TROUBLE_COL_TITLE,
@@ -806,10 +805,69 @@ def page_trouble_list():
         detail_cols=detail_cols
     )
 
+def page_trouble_report():
+    st.header("トラブル報告機能")
+    st.markdown("---")
+    tab_selection = st.radio("表示切り替え", ["📝 記録", "📚 一覧"], key="trouble_tab", horizontal=True)
+    
+    if tab_selection == "📝 記録": page_trouble_recording()
+    elif tab_selection == "📚 一覧": page_trouble_list()
 
-# --- 8. IVデータ解析 ---
+
+# 7. 連絡・問い合わせ機能
+def page_contact_recording():
+    st.markdown("#### ✉️ 新しい問い合わせを記録")
+    # ... (既存の記録ロジックをここに記述) ...
+    with st.form(key='contact_form'):
+        
+        contact_type = st.selectbox(f"{CONTACT_COL_TYPE}", ["バグ報告", "機能要望", "データ修正依頼", "その他"])
+        contact_detail = st.text_area(f"{CONTACT_COL_DETAIL}", height=150, key='contact_detail_input')
+        contact_info = st.text_input(f"{CONTACT_COL_CONTACT} (メールアドレスなど、任意)", key='contact_info_input')
+        
+        st.markdown("---")
+        submit_button = st.form_submit_button(label='送信')
+
+    if submit_button:
+        if not contact_detail:
+            st.warning("詳細内容を入力してください。")
+            return
+            
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        row_data = [
+            timestamp, contact_type, contact_detail, contact_info
+        ]
+        
+        try:
+            worksheet = gc.open(SPREADSHEET_NAME).worksheet(SHEET_CONTACT_DATA)
+            worksheet.append_row(row_data)
+            st.success("お問い合わせを送信しました。"); st.cache_data.clear(); st.rerun() 
+        except Exception:
+            st.error(f"データの書き込み中にエラーが発生しました。シート名 '{SHEET_CONTACT_DATA}' が存在するか確認してください。")
+
+def page_contact_list():
+    detail_cols = [CONTACT_COL_TIMESTAMP, CONTACT_COL_TYPE, CONTACT_COL_DETAIL, CONTACT_COL_CONTACT]
+    page_data_list(
+        sheet_name=SHEET_CONTACT_DATA,
+        title="連絡・問い合わせ",
+        col_time=CONTACT_COL_TIMESTAMP,
+        col_filter=CONTACT_COL_TYPE,
+        col_memo=CONTACT_COL_DETAIL,
+        detail_cols=detail_cols
+    )
+
+def page_contact_form():
+    st.header("連絡・問い合わせ機能")
+    st.markdown("---")
+    tab_selection = st.radio("表示切り替え", ["📝 記録", "📚 一覧"], key="contact_tab", horizontal=True)
+    
+    if tab_selection == "📝 記録": page_contact_recording()
+    elif tab_selection == "📚 一覧": page_contact_list()
+
+
+# 8. IVデータ解析
 def page_iv_analysis():
-    """⚡ IVデータ解析ページ（キャッシュ適用済み）"""
+    """⚡ IVデータ解析ページ（日本語対応）"""
     st.header("⚡ IVデータ解析")
     
     uploaded_files = st.file_uploader(
@@ -825,7 +883,8 @@ def page_iv_analysis():
         st.subheader("ステップ1: ファイル読み込みと解析")
         
         for uploaded_file in uploaded_files:
-            df = load_iv_data(uploaded_file.getvalue(), uploaded_file.name)
+            # load_data_file を使用
+            df = load_data_file(uploaded_file.getvalue(), uploaded_file.name)
             
             if df is not None and not df.empty:
                 valid_dataframes.append(df)
@@ -833,26 +892,27 @@ def page_iv_analysis():
         
         if valid_dataframes:
             
-            combined_df = combine_iv_dataframes(valid_dataframes, filenames)
+            combined_df = combine_dataframes(valid_dataframes, filenames)
             
             st.success(f"{len(valid_dataframes)}個の有効なファイルを読み込み、結合しました。")
             
-            st.subheader("ステップ2: グラフ表示")
+            st.subheader("ステップ2: グラフ表示 (日本語対応)")
             
             fig, ax = plt.subplots(figsize=(12, 7)) 
             
             for filename in filenames:
-                ax.plot(combined_df['Voltage_V'], combined_df[filename], label=filename)
+                ax.plot(combined_df['X_Axis'], combined_df[filename], label=filename)
             
-            ax.set_xlabel("Voltage (V)")
-            ax.set_ylabel("Current (A)")
+            ax.set_xlabel("電圧 (V)") # 日本語ラベル
+            ax.set_ylabel("電流 (A)") # 日本語ラベル
             ax.grid(True)
             ax.legend(title="ファイル名", loc='best')
-            ax.set_title("IV特性比較")
+            ax.set_title("IV特性比較") # 日本語タイトル
             
             st.pyplot(fig, use_container_width=True) 
             
             st.subheader("ステップ3: 結合データ")
+            combined_df = combined_df.rename(columns={'X_Axis': 'Voltage_V'}) # 表示用
             st.dataframe(combined_df, use_container_width=True)
             
             # Excelダウンロード
@@ -869,8 +929,74 @@ def page_iv_analysis():
         else:
             st.warning("有効なデータファイルが見つかりませんでした。")
 
+
+# 9. PLデータ解析 (復活・日本語対応)
+def page_pl_analysis():
+    """🔬 PLデータ解析ページ（復活・日本語対応）"""
+    st.header("🔬 PLデータ解析")
+    st.info("※ IVデータと同様に、2列の数値データ（波長/エネルギー vs 強度）を持つテキストファイルを想定しています。")
+    
+    uploaded_files = st.file_uploader(
+        "PL測定データファイル (.txt) をアップロード",
+        type=['txt'], 
+        accept_multiple_files=True
+    )
+
+    if uploaded_files:
+        valid_dataframes = []
+        filenames = []
+        
+        st.subheader("ステップ1: ファイル読み込みと解析")
+        
+        for uploaded_file in uploaded_files:
+            # load_data_file を使用
+            df = load_data_file(uploaded_file.getvalue(), uploaded_file.name)
+            
+            if df is not None and not df.empty:
+                valid_dataframes.append(df)
+                filenames.append(uploaded_file.name)
+        
+        if valid_dataframes:
+            combined_df = combine_dataframes(valid_dataframes, filenames)
+            
+            st.success(f"{len(valid_dataframes)}個の有効なファイルを読み込み、結合しました。")
+            
+            st.subheader("ステップ2: グラフ表示 (日本語対応)")
+            
+            fig, ax = plt.subplots(figsize=(12, 7)) 
+            
+            for filename in filenames:
+                ax.plot(combined_df['X_Axis'], combined_df[filename], label=filename)
+            
+            # PLデータに合わせたラベルに変更
+            ax.set_xlabel("波長 / エネルギー (nm / eV)") # 日本語ラベル
+            ax.set_ylabel("強度 (a.u.)") # 日本語ラベル
+            ax.grid(True)
+            ax.legend(title="ファイル名", loc='best')
+            ax.set_title("PLスペクトル比較") # 日本語タイトル
+            
+            st.pyplot(fig, use_container_width=True) 
+            
+            st.subheader("ステップ3: 結合データ")
+            combined_df = combined_df.rename(columns={'X_Axis': 'Wavelength_or_Energy'}) # 表示用
+            st.dataframe(combined_df, use_container_width=True)
+            
+            # Excelダウンロード
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                combined_df.to_excel(writer, sheet_name='Combined PL Data', index=False)
+            
+            st.download_button(
+                label="📈 結合Excelデータとしてダウンロード",
+                data=output.getvalue(),
+                file_name=f"pl_analysis_combined_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        else:
+            st.warning("有効なデータファイルが見つかりませんでした。")
+
+
 # --- Dummy Pages (未実装のページ) ---
-def page_pl_analysis(): st.header("🔬 PLデータ解析"); st.info("このページは未実装です。")
 def page_calendar(): st.header("🗓️ スケジュール・装置予約"); st.info("このページは未実装です。")
 
 # --------------------------------------------------------------------------
@@ -879,36 +1005,24 @@ def page_calendar(): st.header("🗓️ スケジュール・装置予約"); st.
 def main():
     st.sidebar.title("山根研 ツールキット")
     
+    # ★修正箇所: メニューを記録・一覧で統合★
     menu_selection = st.sidebar.radio("機能選択", [
-        "📝 エピノート記録", "📚 エピノート一覧", 
-        "🛠️ メンテノート記録", "🛠️ メンテノート一覧",
-        "⚡ IVデータ解析", "🔬 PLデータ解析",
-        "🗓️ スケジュール・装置予約",
-        "📝 議事録記録", "📚 議事録一覧", 
-        "💡 知恵袋・質問投稿", "💡 知恵袋・質問一覧", 
-        "🤝 引き継ぎメモ記録", "🤝 引き継ぎメモ一覧",
-        "🚨 トラブル報告記録", "🚨 トラブル報告一覧", 
-        "✉️ 問い合わせ記録", "✉️ 問い合わせ一覧"
+        "エピノート", "メンテノート", "議事録", "知恵袋・質問箱", "装置引き継ぎメモ", "トラブル報告", "連絡・問い合わせ",
+        "⚡ IVデータ解析", "🔬 PLデータ解析", "🗓️ スケジュール・装置予約"
     ])
     
     # ページルーティング
-    if menu_selection == "📝 エピノート記録": page_epi_note_recording()
-    elif menu_selection == "📚 エピノート一覧": page_epi_note_list()
-    elif menu_selection == "🛠️ メンテノート記録": page_mainte_recording()
-    elif menu_selection == "🛠️ メンテノート一覧": page_mainte_list()
+    if menu_selection == "エピノート": page_epi_note()
+    elif menu_selection == "メンテノート": page_mainte_note()
+    elif menu_selection == "議事録": page_meeting_note()
+    elif menu_selection == "知恵袋・質問箱": page_qa_box()
+    elif menu_selection == "装置引き継ぎメモ": page_handover_note()
+    elif menu_selection == "トラブル報告": page_trouble_report()
+    elif menu_selection == "連絡・問い合わせ": page_contact_form()
     elif menu_selection == "⚡ IVデータ解析": page_iv_analysis()
     elif menu_selection == "🔬 PLデータ解析": page_pl_analysis()
     elif menu_selection == "🗓️ スケジュール・装置予約": page_calendar()
-    elif menu_selection == "📝 議事録記録": page_meeting_recording()
-    elif menu_selection == "📚 議事録一覧": page_meeting_list()
-    elif menu_selection == "💡 知恵袋・質問投稿": page_qa_recording()
-    elif menu_selection == "💡 知恵袋・質問一覧": page_qa_list()
-    elif menu_selection == "🤝 引き継ぎメモ記録": page_handover_recording()
-    elif menu_selection == "🤝 引き継ぎメモ一覧": page_handover_list()
-    elif menu_selection == "🚨 トラブル報告記録": page_trouble_recording()
-    elif menu_selection == "🚨 トラブル報告一覧": page_trouble_list()
-    elif menu_selection == "✉️ 問い合わせ記録": page_contact_recording()
-    elif menu_selection == "✉️ 問い合わせ一覧": page_contact_list()
+
 
 if __name__ == "__main__":
     main()
