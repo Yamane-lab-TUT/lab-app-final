@@ -126,21 +126,37 @@ class DummyStorageClient:
     def list_blobs(self, **kwargs): return []
 
 # ダミーカレンダーサービスは使用しないため削除
+# app.py の initialize_google_services 関数部分のみ
+# ... (省略) ...
 
 @st.cache_resource(ttl=3600)
 def initialize_google_services():
-    """
-    Streamlit Secretsから認証情報を読み込み、Googleサービスを初期化する
-    """
+    """Streamlit Secretsから認証情報を読み込み、Googleサービスを初期化する"""
     if "gcs_credentials" not in st.secrets:
-        # このエラーは secrets.toml に CLOUD_STORAGE_BUCKET_NAME しかなく gcs_credentials がない場合に発生
         st.error("❌ 致命的なエラー: Streamlit CloudのSecretsに `gcs_credentials` が見つかりません。")
         return DummyGSClient(), DummyStorageClient()
 
     try:
-        # JSON文字列を直接ロード
-        # サービスの初期化に必要な情報が格納された辞書
-        info = json.loads(st.secrets["gcs_credentials"]) 
+        raw_credentials_string = st.secrets["gcs_credentials"]
+        
+        # --- 認証文字列の【強制】クリーンアップ v20.3.0 ---
+        # 1. 冒頭と末尾の不要な空白（改行、タブなど）を除去
+        cleaned_string = raw_credentials_string.strip()
+        
+        # 2. JSON内部の改行とタブ文字を完全に除去し、JSON全体を一行にする
+        # これにより、三重引用符内のインデントや改行によるパースエラーをほぼ確実に排除します。
+        # ただし、private_key内のエスケープされた改行(\\n)は保持される必要があります。
+        
+        # JSON外の改行・タブ・全角スペースを除去
+        cleaned_string = cleaned_string.replace('\n', '')
+        cleaned_string = cleaned_string.replace('\t', '')
+        cleaned_string = cleaned_string.replace(' ', '') # U+00A0: NO-BREAK SPACE (全角スペースと誤認されやすい文字)
+        
+        # 最後に連続するスペースを一つに置換 (JSONの構造を壊さない範囲で)
+        cleaned_string = re.sub(r'(\s){2,}', r'\1', cleaned_string)
+        
+        # JSONをパース
+        info = json.loads(cleaned_string) 
         
         # gspread (Spreadsheet) の認証
         gc = gspread.service_account_from_dict(info)
@@ -148,18 +164,20 @@ def initialize_google_services():
         # google.cloud.storage (GCS) の認証
         storage_client = storage.Client.from_service_account_info(info)
 
+        st.sidebar.success("✅ Googleサービス認証成功")
         return gc, storage_client
 
     except json.JSONDecodeError as e:
-        # JSONパースエラーを specifically catch する
-        st.error(f"❌ 認証エラー（JSON形式不正）: サービスアカウントのJSON形式が不正です。secrets.toml の `gcs_credentials` の値が、**三重引用符 `\"\"\"` で囲まれた正しいJSON文字列**であることを確認してください。エラー詳細: {e}")
+        # JSONパースエラーが発生した場合
+        st.error(f"❌ 認証エラー（JSON形式不正）: サービスアカウントのJSON形式が不正です。改行やタブ文字、不要なスペースが含まれていないか確認してください。エラー詳細: {e}")
         return DummyGSClient(), DummyStorageClient()
         
     except Exception as e:
-        # その他の認証エラー
+        # その他の認証エラー（権限不足など）
         st.error(f"❌ 認証エラー: サービスアカウントの初期化に失敗しました。認証情報をご確認ください。({e})")
         return DummyGSClient(), DummyStorageClient()
 
+# ... (省略) ...
 # Calendar Serviceは使わないため、戻り値を調整
 gc, storage_client = initialize_google_services() 
 
@@ -911,4 +929,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
