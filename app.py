@@ -233,15 +233,15 @@ def load_data_file(uploaded_bytes, uploaded_filename):
 @st.cache_data(show_spinner="PLデータを解析中...", max_entries=128)
 def load_pl_data(uploaded_file):
     """
-    PLデータを安全に読み込む関数。
-    コメント行（#, !, /）をスキップし、2列データを返す。
-    カンマ・タブ・空白など複数区切りに対応。
+    PLデータ読み込み関数（最終安定版）。
+    コメント行(#,!,/)をスキップし、カンマ・スペース・タブ区切りすべてに対応。
+    例: '1, 303' / '1 303' / '1\t303'
     """
     try:
-        # ファイル内容を文字列に変換
+        # 読み込み
         content = uploaded_file.getvalue().decode('utf-8', errors='ignore').splitlines()
 
-        # コメント行を除外し、最初の数値行を探す
+        # コメント行・空行スキップ
         data_lines = []
         for line in content:
             s = line.strip()
@@ -250,14 +250,25 @@ def load_pl_data(uploaded_file):
             data_lines.append(s)
 
         if not data_lines:
-            st.warning(f"'{uploaded_file.name}' に有効なデータ行がありません。")
+            st.warning(f"'{uploaded_file.name}' に有効なデータ行が見つかりません。")
             return None
 
-        # pandasで読み込み（区切りはカンマ・空白・タブ対応）
-        df = pd.read_csv(io.StringIO("\n".join(data_lines)),
-                         sep=r'\s+|,|\t', engine='python', header=None, names=['pixel', 'intensity'])
+        # --- データを統一形式に整形 ---
+        # 「, 」や「 ,」などを統一してカンマまたは空白に変換
+        normalized = []
+        for line in data_lines:
+            # カンマ→スペースに統一
+            line = line.replace(',', ' ')
+            # タブをスペースに変換
+            line = line.replace('\t', ' ')
+            # 余分なスペースを1つに
+            line = re.sub(r'\s+', ' ', line.strip())
+            normalized.append(line)
 
-        # 数値変換＋NaN除去
+        df = pd.read_csv(io.StringIO("\n".join(normalized)),
+                         sep=' ', header=None, names=['pixel', 'intensity'])
+
+        # 数値変換
         df['pixel'] = pd.to_numeric(df['pixel'], errors='coerce')
         df['intensity'] = pd.to_numeric(df['intensity'], errors='coerce')
         df.dropna(inplace=True)
@@ -1139,6 +1150,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
