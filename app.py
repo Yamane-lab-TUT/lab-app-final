@@ -215,26 +215,38 @@ def load_pl_data(uploaded_file):
 def load_iv_data(uploaded_file):
     """
     アップロードされたIV特性のtxtファイルを読み込み、Pandas DataFrameを返す関数。
-    ロバストなPythonエンジンと正規表現を使用し、ヘッダー行を確実にスキップします。
+    文字列の前処理を行い、確実にデータ列（2列）を抽出します。
     """
     try:
-        data_string_io = io.StringIO(uploaded_file.getvalue().decode('utf-8'))
+        # 1. ファイル全体をUTF-8で読み込み
+        content = uploaded_file.getvalue().decode('utf-8')
         
-        # skiprows=1: 最初の1行(VF(V) IF(A))をスキップ
-        # header=None: ヘッダーがないものとして扱う
-        # sep=r'\s+': 複数の空白文字を区切り文字として認識（最もロバスト）
-        # engine='python': 正規表現の区切り文字を使うためPythonエンジンを強制
-        df = pd.read_csv(
-            data_string_io, 
-            sep=r'\s+',              # ★修正箇所: 正規表現 \s+ (一つ以上の空白) で区切る
-            engine='python',        # ★修正箇所: Pythonエンジンを使用
-            skiprows=1,             # 最初の行をスキップ
-            header=None             # ヘッダーなし
-        )
+        # 2. 行ごとに分割し、ヘッダー行(1行目)と空行をスキップしてデータ行だけを抽出
+        lines = content.splitlines()
+        data_lines = lines[1:] # 1行目のヘッダー "VF(V) IF(A)" をスキップ
+        
+        cleaned_lines = []
+        for line in data_lines:
+            # 行頭/行末の空白を削除し、複数の空白文字（\s+）を単一のタブ（\t）に置換
+            # これにより、Cエンジンで確実に2列として読み込めるようになる
+            cleaned_line = re.sub(r'\s+', '\t', line.strip())
+            if cleaned_line: # 空行を除外
+                cleaned_lines.append(cleaned_line)
 
+        # 3. クリーンアップされたデータを行としてStringIOに格納
+        processed_data = '\n'.join(cleaned_lines)
+        if not processed_data:
+            st.warning(f"警告：'{uploaded_file.name}'に有効なデータが含まれていません。ファイルの内容を確認してください。")
+            return None
+        
+        data_string_io = io.StringIO(processed_data)
+        
+        # 4. 高速なCエンジンでタブ区切りとして読み込み
+        #    すでにヘッダーは手動でスキップ済みなので、header=None
+        df = pd.read_csv(data_string_io, sep='\t', engine='c', header=None)
+        
         # 2列目以降を削除し、列名を再設定 (列は0, 1)
         if df is None or len(df.columns) < 2:
-            # 読み込み失敗時の警告は、ここで出力される可能性が高い
             st.warning(f"警告：'{uploaded_file.name}'の読み込みに失敗しました。ファイル形式を確認してください。（データ列不足）")
             return None
         
@@ -254,9 +266,9 @@ def load_iv_data(uploaded_file):
         return df
 
     except Exception as e:
-        st.error(f"エラー：'{uploaded_file.name}'の読み込みに失敗しました。ファイル形式を確認してください。({e})")
+        # 予期せぬエラーはここで捕捉
+        st.error(f"エラー：'{uploaded_file.name}'の読み込み中に予期せぬ問題が発生しました。ファイル形式を確認してください。({e})")
         return None
-
 
 # --- UI Page Functions ---
 
@@ -980,4 +992,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
