@@ -366,26 +366,21 @@ def display_attached_files(row_dict, col_url_key, col_filename_key=None):
             st.info("添付ファイルはありません。")
             return
 
-        # JSON 形式で保存されていることが多い
-        urls = []
+        # URLとファイル名を取得する既存のロジックはそのまま
+        urls = []; filenames = []
         try:
             urls = json.loads(row_dict[col_url_key])
-            if not isinstance(urls, list):
-                urls = [urls]
+            if not isinstance(urls, list): urls = [urls]
         except Exception:
-            # カンマ区切り等の古い形式
             urls = [s.strip().strip('"') for s in str(row_dict[col_url_key]).split(',') if s.strip()]
 
-        filenames = []
         if col_filename_key and col_filename_key in row_dict and row_dict[col_filename_key]:
             try:
                 filenames = json.loads(row_dict[col_filename_key])
-                if not isinstance(filenames, list):
-                    filenames = [filenames]
+                if not isinstance(filenames, list): filenames = [filenames]
             except Exception:
-                # 古い形式は無視して URL のファイル名を使用
                 filenames = []
-
+        
         # 表示
         for idx, url in enumerate(urls):
             if not url:
@@ -393,21 +388,28 @@ def display_attached_files(row_dict, col_url_key, col_filename_key=None):
             label = filenames[idx] if idx < len(filenames) else os.path.basename(url)
             lower = url.lower()
             is_image = lower.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp'))
+            is_pdf = lower.endswith('.pdf') # PDF判定を追加
+            
+            st.markdown(f"##### {label}")
+
             if is_image:
-                # 自動リサイズ（Streamlit に任せる）
-                st.image(url, caption=label, use_column_width=True)
+                # 画像は st.image でページ内に埋め込み表示
+                st.image(url, caption="画像ファイル", use_column_width=True)
+            elif is_pdf:
+                # PDFは iframe を使って同じページ内に埋め込み表示
+                # 注意: GCSのURLが公開されている必要があります。
+                st.markdown(f"""
+                    <iframe src="{url}" width="100%" height="600" style="border: none;"></iframe>
+                    <p style='font-size: small;'><a href="{url}" target="_blank">別タブで開く</a></p>
+                """, unsafe_allow_html=True)
             else:
-                st.markdown(f"🔗 [{label}]({url})")
+                # その他のファイルはリンク（別ページへ）またはダウンロードボタンとして提供
+                # ダウンロードボタンの方がユーザー体験が良い場合が多いです。
+                st.warning(f"このファイルはブラウザでの直接表示をサポートしていません。")
+                st.markdown(f"🔗 [{label} をダウンロード]({url})")
+
     except Exception as e:
         st.error(f"添付ファイルの表示に失敗しました: {e}")
-
-# -*- coding: utf-8 -*-
-
-import streamlit as st
-import pandas as pd
-import json
-from io import BytesIO
-from datetime import datetime
 
 # ---------------------------
 # --- ユーティリティ参照 ---
@@ -1150,6 +1152,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
