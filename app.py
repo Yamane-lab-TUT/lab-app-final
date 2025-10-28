@@ -79,9 +79,12 @@ def load_iv_data(uploaded_file):
 
 # app.py (page_iv_analysis 関数内)
 
+# app.py (page_iv_analysis 関数内)
+
 def page_iv_analysis():
+    # ... (前略：ヘッダー、markdownは変更なし) ...
     st.header("⚡ IV Data Analysis (IVデータ解析)")
-    st.markdown("IVデータファイルを選択し、グラフ描画と、**個別データシート**のエクスポートを行います。") # 説明を変更
+    st.markdown("IVデータファイルを選択し、グラフ描画とデータのエクスポートを行います。**ファイル数が10個以下の場合、結合データも作成します。**")
 
     uploaded_files = st.file_uploader(
         "IVデータファイル（.txt または .csv）を選択してください",
@@ -94,7 +97,7 @@ def page_iv_analysis():
         
         fig, ax = plt.subplots(figsize=(12, 7))
         
-        all_data_for_export = [] 
+        all_data_for_export = [] # 各ファイルのDFとファイル名を格納
         
         # 1. データの読み込みとグラフ描画
         for uploaded_file in uploaded_files:
@@ -109,12 +112,11 @@ def page_iv_analysis():
                 ax.plot(df[voltage_col], df[current_col], label=file_name)
                 
                 # エクスポート用に[Voltage_V, Current_A_filename]のDFをリストに追加
-                # グラフとエクスポートのために必要なデータのみを使用
                 df_export = df.rename(columns={voltage_col: 'Voltage_V', current_col: f'Current_A_{file_name}'})
                 all_data_for_export.append({'name': file_name, 'df': df_export})
 
         
-        # グラフ設定 (文字化け対策: すべて英語)
+        # グラフ設定
         ax.set_title('IV Characteristic Plot', fontsize=16)
         ax.set_xlabel('Voltage (V)', fontsize=14)
         ax.set_ylabel('Current (A)', fontsize=14)
@@ -122,49 +124,79 @@ def page_iv_analysis():
         ax.legend(title='File Name', loc='best')
         ax.ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
         
-        # Streamlitにグラフを表示
         st.pyplot(fig, use_container_width=True)
-        # 処理落ち対策: Matplotlibのメモリを解放
-        plt.close(fig)
+        plt.close(fig) # メモリ解放
 
         # ------------------------------------------------------------------
-        # 2. Excelエクスポート (メモリ負荷 最小版 - 個別シートのみ)
+        # 2. Excelエクスポート (条件分岐ロジック)
         # ------------------------------------------------------------------
         if all_data_for_export:
             st.subheader("📝 データのエクスポート")
             
             output = BytesIO()
+            file_count = len(all_data_for_export)
+            
+            # --- 条件分岐 ---
+            SHOULD_COMBINE = file_count <= 10
+            
+            if SHOULD_COMBINE:
+                st.info(f"✅ ファイル数が{file_count}個のため、個別データシートに加えて**結合データシート**を作成します。")
+            else:
+                st.warning(f"⚠️ ファイル数が{file_count}個と多いため、クラッシュ防止のため**個別データシートのみ**を作成します。（結合シートはスキップされます）")
+            
             with st.spinner("データをExcelに書き込んでいます..."):
                 with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                     
-                    # --- 各ファイルを別シートに出力 (メモリ負荷 小) ---
+                    # --- (A) 各ファイルを別シートに出力 (共通処理) ---
                     for data_item in all_data_for_export:
                         file_name = data_item['name']
                         df_export = data_item['df']
                         
-                        # Excelのシート名制限（31文字）に対応
                         sheet_name = file_name.replace('.txt', '').replace('.csv', '')
                         if len(sheet_name) > 31:
-                            # ファイル名の末尾ではなく、先頭から28文字に制限
                             sheet_name = sheet_name[:28] 
                         
-                        # データを出力
                         df_export.to_excel(writer, sheet_name=sheet_name, index=False)
                         
                         # 個別DFのメモリを直後に解放
                         del df_export
 
+                    # --- (B) 結合データを出力 (10個以下の場合のみ) ---
+                    if SHOULD_COMBINE:
+                        
+                        # 最初のデータフレームを基準に結合を開始
+                        combined_df = all_data_for_export[0]['df'][['Voltage_V']].copy()
+                        
+                        # 2つ目以降のデータフレームを 'Voltage_V' をキーに結合
+                        for item in all_data_for_export:
+                            df_current = item['df'][df_export.columns] # 必要な列のみ使用
+                            combined_df = pd.merge(combined_df, df_current, on='Voltage_V', how='outer')
+                        
+                        # 電圧順にソート
+                        combined_df.sort_values(by='Voltage_V', inplace=True)
+                        
+                        # 結合DFのプレビュー
+                        st.dataframe(combined_df.head())
+                        
+                        # 結合DFを最終シートに出力
+                        combined_df.to_excel(writer, sheet_name='__COMBINED_DATA__', index=False)
+                        
+                        # 処理落ち対策: 結合DFのメモリを直後に解放
+                        del combined_df
+                        
+            
             # メモリに保持したExcelデータをダウンロード
             processed_data = output.getvalue()
             
+            download_label = "📈 結合/個別データを含むExcelファイルとしてダウンロード" if SHOULD_COMBINE else "📁 全データを個別シートに保存してダウンロード"
+            
             st.download_button(
-                label="📁 全データを個別シートに保存してダウンロード",
+                label=download_label,
                 data=processed_data,
-                file_name=f"iv_data_individual_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                file_name=f"iv_analysis_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             
-            st.warning("⚠️ **結合データ**はメモリ制限によるクラッシュを防ぐため、エクスポート対象から除外しました。")
         else:
             st.warning("有効なデータファイルが見つかりませんでした。")
 # --------------------------------------------------------------------------
@@ -245,4 +277,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
