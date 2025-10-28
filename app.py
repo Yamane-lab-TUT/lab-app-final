@@ -1,9 +1,9 @@
 # --------------------------------------------------------------------------
 # Yamane Lab Convenience Tool - Streamlit Application
 #
-# v18.9:
-# - FIXED: Deprecation warning for st.image(use_column_width) has been fixed 
-#          by replacing it with st.image(use_container_width).
+# v18.10:
+# - FIXED: Performance issue in load_iv_data by prioritizing the faster C engine 
+#          for common delimiters (tab/space) before falling back to the slower Python engine.
 # --------------------------------------------------------------------------
 
 import streamlit as st
@@ -216,22 +216,37 @@ def load_iv_data(uploaded_file):
     """
     アップロードされたIV特性のtxtファイルを読み込み、Pandas DataFrameを返す関数。
     データは2列（Voltage, Current）の形式を想定します。
+    パフォーマンス改善のため、最初に高速なCエンジンで一般的な区切り文字を試みます。
     """
     try:
         data_string_io = io.StringIO(uploaded_file.getvalue().decode('utf-8'))
         
-        # \s+ (1つ以上の空白文字) または , (カンマ) を区切り文字として使用
-        df = pd.read_csv(data_string_io, sep=r'\s+|,', engine='python')
+        df = None
         
-        # 2列目以降を削除し、列名を再設定
-        if len(df.columns) >= 2:
-            df = df.iloc[:, :2]
-            df.columns = ['Voltage_V', 'Current_A']
-        else:
-            st.warning("ファイル内の列数が予想と異なります。最初の列のみを電圧として処理します。")
-            return None # 2列未満の場合は解析不能としてNoneを返す
+        # 1. 高速なCエンジンで、タブ/スペース区切りを試す
+        # 多くの測定データはタブまたはスペース区切りであるため、Cエンジンで高速読み込みを試行
+        try:
+            data_string_io.seek(0)
+            df = pd.read_csv(data_string_io, sep='\t', engine='c') # Tab-separated
+        except Exception:
+            try:
+                data_string_io.seek(0)
+                # 次にスペース区切りを試す (skipinitialspace=Trueで複数の空白を許容)
+                df = pd.read_csv(data_string_io, sep=' ', engine='c', skipinitialspace=True)
+            except Exception:
+                # 2. 失敗した場合、ロバストなPythonエンジンで \s+ (複数の空白) または , (カンマ) 区切りで読み込む（元のロジック）
+                data_string_io.seek(0)
+                df = pd.read_csv(data_string_io, sep=r'\s+|,', engine='python')
 
+        # 2列目以降を削除し、列名を再設定
+        # どの読み込み方法が成功したとしても、最初の2列のみを保持し、列名を変更する
+        if df is None or len(df.columns) < 2:
+            st.warning(f"警告：'{uploaded_file.name}'の読み込みに失敗しました。ファイル形式を確認してください。")
+            return None
         
+        df = df.iloc[:, :2]
+        df.columns = ['Voltage_V', 'Current_A']
+
         # 数値型に変換し、変換できない行は削除
         df['Voltage_V'] = pd.to_numeric(df['Voltage_V'], errors='coerce')
         df['Current_A'] = pd.to_numeric(df['Current_A'], errors='coerce')
@@ -321,7 +336,7 @@ def page_note_list():
             if file_url:
                 if file_name and file_name.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
                     # 画像幅を400pxに制限
-                    st.image(file_url, caption=file_name, width=700)
+                    st.image(file_url, caption=file_name, width=400)
                 else:
                     st.markdown(f"**写真:** [ファイルを開く]({file_url})", unsafe_allow_html=True)
 
@@ -351,7 +366,7 @@ def page_note_list():
             if file_url:
                 if file_name and file_name.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
                     # 画像幅を400pxに制限
-                    st.image(file_url, caption=file_name, width=700)
+                    st.image(file_url, caption=file_name, width=400)
                 else:
                     st.markdown(f"**関連ファイル:** [ファイルを開く]({file_url})", unsafe_allow_html=True)
 
@@ -695,6 +710,7 @@ def page_iv_analysis():
             
             all_dataframes = []
             
+            # ここでデータ処理が開始。load_iv_dataの効率が全体の速度に大きく影響する。
             for uploaded_file in uploaded_files:
                 df = load_iv_data(uploaded_file)
                 
@@ -709,8 +725,10 @@ def page_iv_analysis():
                     all_dataframes.append(export_df)
 
             if all_dataframes:
+                # 複数のデータフレームを電圧をキーに結合する
                 final_df = all_dataframes[0]
                 for i in range(1, len(all_dataframes)):
+                    # ここでマージ処理が重くなる可能性がある
                     final_df = pd.merge(final_df, all_dataframes[i], on='Voltage_V', how='outer')
                 
                 final_df = final_df.sort_values(by='Voltage_V').reset_index(drop=True)
@@ -725,6 +743,7 @@ def page_iv_analysis():
                 st.pyplot(fig)
                 
                 output = BytesIO()
+                # ★ボトルネック3: openpyxlを使用したExcel書き込みは、大量データで非常に遅くなる
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     final_df.to_excel(writer, index=False, sheet_name='Combined IV Data')
 
@@ -843,7 +862,6 @@ def page_trouble_report():
                 
                 if urls and names and len(urls) == len(names):
                     if is_old_format: st.warning("この報告は旧形式のファイル形式で保存されています。")
-                    st.info(f"{len(urls)}個のファイルが添付されています。")
                     
                     # Display images/links in up to 4 columns
                     cols = st.columns(min(len(urls), 4)) 
@@ -967,4 +985,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
