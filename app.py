@@ -22,6 +22,11 @@ from io import BytesIO
 import calendar
 import matplotlib.font_manager as fm
 
+# Google Calendar APIのための新しいインポート
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+
 # Optional: google cloud client import
 try:
     from google.cloud import storage
@@ -1370,6 +1375,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
