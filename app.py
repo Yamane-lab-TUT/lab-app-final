@@ -354,6 +354,9 @@ def upload_file_to_gcs(storage_client_obj, file_obj, folder_name):
 # ---------------------------
 # --- 添付ファイル表示ユーティリティ（自動リサイズ） ---
 # ---------------------------
+# ---------------------------
+# --- 添付ファイル表示ユーティリティ（自動リサイズ） ---
+# ---------------------------
 def display_attached_files(row_dict, col_url_key, col_filename_key=None):
     """
     row_dict: pandas Series / dict representing a row
@@ -365,7 +368,7 @@ def display_attached_files(row_dict, col_url_key, col_filename_key=None):
             st.info("添付ファイルはありません。")
             return
 
-        # URLとファイル名を取得するロジックはそのまま
+        # URLとファイル名を取得する既存のロジックはそのまま
         urls = []; filenames = []
         try:
             urls = json.loads(row_dict[col_url_key])
@@ -387,39 +390,45 @@ def display_attached_files(row_dict, col_url_key, col_filename_key=None):
             
             label = filenames[idx] if idx < len(filenames) else os.path.basename(url)
             
-            # --- 修正点: URLからクエリパラメータ（?以降）を削除して拡張子を判定 ---
-            # "?" 以降を削除
+            # URLからクエリパラメータ（?以降）を削除して拡張子を判定
             url_no_query = url.split('?')[0] 
             lower = url_no_query.lower()
             
             is_image = lower.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp')) 
             is_pdf = lower.endswith('.pdf')
-            # -------------------------------------------------------------------
             
-            st.markdown(f"##### {label}")
+            # ファイル名のみを表示（長いURLは表示しない）
+            st.markdown(f"**添付ファイル:** {label}")
+            st.markdown("---") 
 
             if is_image:
                 # 画像は st.image でページ内に埋め込み表示
-                st.markdown(f"**写真・画像:** {label}") # ファイル名を画像の上に表示
                 try:
-                    st.image(url, caption=label, use_column_width=True) # URLはクエリ付きのままでOK
+                    # ⚠️ 修正点 1 & 2 & 3: heightを指定し、use_column_widthをuse_container_widthに変更
+                    st.image(
+                        url, 
+                        caption=label, 
+                        use_container_width=True, # 警告を消し、カラム幅に合わせる
+                        # height=500 # 高さを制限する場合 (ただしStreamlitのheightはpixels指定)
+                    )
+                    # Streamlitのst.imageはheightをピクセル値でしか受け付けず、画像の縦横比を崩しやすいため、
+                    # ここでは一旦heightの直接指定は避け、幅に合わせた適切なリサイズに任せます。
+                    # 過度に大きな画像が表示される場合は、st.containerなどを使って幅を制限する方法を検討します。
                 except Exception:
                     st.warning(f"画像 '{label}' の表示に失敗しました。")
-                    st.markdown(f"🔗 [別タブで開く/ダウンロード]({url})")
+                    # リンクも削除
             
             elif is_pdf:
-                # PDFはリンクとして提供し、HTML埋め込みは回避
-                st.markdown(f"**PDFファイル:** {label}")
-                st.markdown(f"🔗 [別タブでPDFファイルを開く]({url})")
-            
-            else:
-                # その他のファイルはリンクとして提供
-                st.markdown(f"**添付ファイル:** {label}")
+                # PDFの iframe埋め込みを削除し、ダウンロードのみにする (長いURLが再び表示されるのを防ぐため)
+                st.info(f"PDFファイル '{label}' は、このページでは直接表示できません。")
                 st.markdown(f"🔗 [ファイルを開く/ダウンロード]({url})")
-                
+
+            else:
+                # その他のファイルはリンクとして提供 (URL自体は表示しない)
+                st.markdown(f"🔗 [ファイルを開く/ダウンロード]({url})")
+
     except Exception as e:
         st.error(f"添付ファイルの表示に失敗しました: {e}")
-
 
 def page_epi_note_list():
     detail_cols = [EPI_COL_TIMESTAMP, EPI_COL_CATEGORY, EPI_COL_NOTE_TYPE, EPI_COL_MEMO, EPI_COL_FILENAME]
@@ -1181,6 +1190,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
