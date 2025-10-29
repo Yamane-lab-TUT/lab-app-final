@@ -162,7 +162,6 @@ storage_client = DummyStorageClient()
 # ---------------------------
 @st.cache_resource(ttl=3600)
 def initialize_google_services():
-    """Streamlit secrets からサービスアカウントJSONを読み込み、gspread と GCS を初期化"""
     global storage
     if storage is None:
         # google.cloud.storage が import できない環境
@@ -1367,6 +1366,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
