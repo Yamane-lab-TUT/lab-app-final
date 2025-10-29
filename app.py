@@ -1215,6 +1215,13 @@ def get_calendar_service():
 def page_calendar():
     st.header("🗓️ スケジュール・装置予約")
     
+    # カテゴリの定義（ファイル上部の定数として定義されていることを前提とします）
+    try:
+        CATEGORY_OPTIONS
+    except NameError:
+        # 暫定的な定義
+        CATEGORY_OPTIONS = ["D1エピ", "D2エピ", "MBEメンテ", "XRD", "PL", "AFM", "フォトリソ", "アニール", "蒸着", "その他入力"]
+
     # --- 1. 外部予約サイトへのリンク ---
     st.subheader("外部予約サイト")
     
@@ -1266,15 +1273,21 @@ def page_calendar():
         col_cat, col_other = st.columns([1, 2])
         
         with col_cat:
-            category = st.selectbox("作業/装置カテゴリ", CATEGORY_OPTIONS)
+            # 💡 フォーム内でも、st.selectboxが更新されると即座にこのブロック内は再実行される
+            category = st.selectbox("作業/装置カテゴリ", CATEGORY_OPTIONS, key="category_select")
             
         custom_category = ""
         with col_other:
+            # 💡 選択が 'その他入力' の場合にのみ、カスタム入力フィールドを配置
             if category == "その他入力":
-                custom_category = st.text_input("カテゴリを直接入力", placeholder="例: 学会発表準備", key="custom_category_input_cal") 
+                custom_category = st.text_input(
+                    "カスタムカテゴリを直接入力", 
+                    placeholder="例: 学会発表準備", 
+                    key="custom_category_input_cal"
+                ) 
         
         # タイトルの生成
-        final_category = custom_category if custom_category else category
+        final_category = custom_category if category == "その他入力" else category
         default_title = f"{user_name} ({final_category})" if user_name and final_category else ""
         
         st.markdown(f"**💡 予定のタイトル:** `{default_title}`")
@@ -1303,7 +1316,7 @@ def page_calendar():
                 return 
 
             # ----------------------------------------
-            # ✅ API経由で直接カレンダーに書き込み 
+            # API経由で直接カレンダーに書き込み 
             # ----------------------------------------
             service = get_calendar_service()
             if service is None:
@@ -1337,14 +1350,16 @@ def page_calendar():
                 
                 st.session_state['user_name'] = user_name 
                 st.success(f"予定 `{default_title}` がカレンダーに自動登録されました！")
-                st.experimental_rerun()
+                
+                # st.rerun() で画面を即座に更新
+                st.rerun() 
                     
             except ValueError:
                 st.error("時刻のフォーマットが無効です。「HH:MM」の形式で入力してください。")
             except HttpError as e:
-                # 権限不足または不正なIDの場合のエラー捕捉
-                st.error(f"カレンダー登録に失敗しました。詳細: {e.content.decode()}")
+                st.error(f"カレンダー登録に失敗しました。権限とカレンダーIDを確認してください。詳細: {e.content.decode()}")
             except Exception as e:
+                # 予期せぬエラーの表示
                 st.error(f"予定の登録中に予期せぬエラーが発生しました: {e}")
 # ---------------------------
 # --- メインルーティング ---
@@ -1389,6 +1404,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
