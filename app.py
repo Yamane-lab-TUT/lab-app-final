@@ -1292,7 +1292,7 @@ def page_calendar():
         
         submit_button = st.form_submit_button(label='⬆️ Googleカレンダーに自動登録')
 
-        if submit_button:
+if submit_button:
             # フォーム外の user_name と final_category を使用
             if not user_name or not final_category:
                 st.error("「登録者名」と「作業カテゴリ」は必須です。")
@@ -1309,6 +1309,7 @@ def page_calendar():
                 return 
 
             try:
+                # ... (日時オブジェクトの生成、エラーチェックのコードは省略なしでそのまま) ...
                 start_dt_obj = datetime.combine(start_date, datetime.strptime(start_time_str, '%H:%M').time())
                 end_dt_obj = datetime.combine(end_date, datetime.strptime(end_time_str, '%H:%M').time())
                 
@@ -1333,10 +1334,15 @@ def page_calendar():
                 # API経由で予定を挿入
                 event = service.events().insert(calendarId=CALENDAR_ID, body=event_body).execute()
                 
+                # 成功メッセージを表示し、ユーザー名をセッションに保存
                 st.session_state['user_name'] = user_name 
-                st.success(f"予定 `{final_title}` がカレンダーに自動登録されました！")
                 
+                # 🌟 ここが修正/最適化された成功表示と更新部分です 🌟
+                st.success(f"✅ 予定 `{final_title}` がカレンダーに自動登録されました！")
+                
+                # ページ全体を再実行し、カレンダー埋め込みを再ロードして更新
                 st.rerun() 
+                # -------------------------------------------------------------
                     
             except ValueError:
                 st.error("時刻のフォーマットが無効です。「HH:MM」の形式で入力してください。")
@@ -1387,3 +1393,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
