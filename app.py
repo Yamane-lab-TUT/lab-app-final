@@ -387,6 +387,7 @@ def display_attached_files(row_dict, col_url_key, col_filename_key=None):
             
             label = filenames[idx] if idx < len(filenames) else os.path.basename(url)
             
+            # URLからクエリパラメータ（?以降）を削除して拡張子を判定
             url_no_query = url.split('?')[0] 
             lower = url_no_query.lower()
             
@@ -395,11 +396,11 @@ def display_attached_files(row_dict, col_url_key, col_filename_key=None):
             
             st.markdown("---") # 各ファイルの区切り
 
-if is_image:
+            if is_image:
                 st.markdown("**写真・画像:**")
-                # ----------------------------------------------------
-                # ⚠️ 修正と最終確認: st.markdown で HTML を安全にレンダリングする
-                # max-height: 500px; で縦幅を制限し、width: auto; で縦横比を維持。
+                
+                # HTMLで強制的に表示し、CSSで縦幅を制限 (max-height: 500px)
+                # unsafe_allow_html=True を必ず含めることで、HTML文字列ではなく画像としてレンダリングする
                 img_html = f"""
                 <img 
                     src="{url}" 
@@ -407,12 +408,10 @@ if is_image:
                     style="max-height: 500px; width: auto; display: block; margin-left: auto; margin-right: auto;"
                 >
                 """
-                # HTMLを適用させるために unsafe_allow_html=True が必須です。
                 st.markdown(img_html, unsafe_allow_html=True) 
-                # ----------------------------------------------------
 
                 # 画像の下にダウンロードリンク（リンクの表示は最小限に）
-                st.markdown(f"🔗 [ファイルを開く/ダウンロード]({url})")
+                st.markdown(f"🔗 [ファイルを開く/ダウンロード]({url})") 
             
             elif is_pdf:
                 st.info("PDFファイルは、このページでは直接表示できません。")
@@ -422,14 +421,9 @@ if is_image:
                 st.markdown(f"🔗 [ファイルを開く/ダウンロード]({url})")
 
     except Exception as e:
-        # 例外発生時も、st.markdownのHTMLが原因でないかチェックしやすいようにする
+        # メインの try-except ブロック
         st.error(f"添付ファイルの表示処理中にエラーが発生しました: {e}")
-        st.warning("⚠️ 画像の表示に失敗しました。")
-        # 最後に安全なリンクを表示
-        try:
-             st.markdown(f"🔗 [元のリンクを開く]({url})")
-        except:
-             pass # urlが未定義の場合のエラー防止
+        st.warning("処理が中断されました。")
 
 def page_epi_note_list():
     detail_cols = [EPI_COL_TIMESTAMP, EPI_COL_CATEGORY, EPI_COL_NOTE_TYPE, EPI_COL_MEMO, EPI_COL_FILENAME]
@@ -1191,6 +1185,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
