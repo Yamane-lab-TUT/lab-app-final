@@ -355,24 +355,28 @@ def upload_file_to_gcs(storage_client_obj, file_obj, folder_name):
 # --- 添付ファイル表示ユーティリティ（自動リサイズ） ---
 # ---------------------------
 
+# app (2).py の 381行目付近
+
+# ---------------------------
+# --- 添付ファイル表示ユーティリティ（最終修正版：高さ制限なし、安定性最優先） ---
+# ---------------------------
 def display_attached_files(row_dict, col_url_key, col_filename_key=None):
     """
     row_dict: pandas Series / dict representing a row
     col_url_key: key name of the URL field (保存時は JSON array を期待)
     col_filename_key: key name of filenames (optional, JSON array)
-    表示は st.image(..., use_container_width=True) で行う（自動リサイズ）
     """
     try:
         if col_url_key not in row_dict or not row_dict[col_url_key]:
             st.info("添付ファイルはありません。")
             return
 
-        # URLとファイル名を取得する既存のロジックはそのまま
         urls = []; filenames = []
         try:
             urls = json.loads(row_dict[col_url_key])
             if not isinstance(urls, list): urls = [urls]
         except Exception:
+            # GCSの署名付きURLが単一の文字列として入っている場合への対応
             urls = [s.strip().strip('"') for s in str(row_dict[col_url_key]).split(',') if s.strip()]
 
         if col_filename_key and col_filename_key in row_dict and row_dict[col_filename_key]:
@@ -386,27 +390,42 @@ def display_attached_files(row_dict, col_url_key, col_filename_key=None):
         for idx, url in enumerate(urls):
             if not url:
                 continue
-            label = filenames[idx] if idx < len(filenames) else os.path.basename(url)
-            lower = url.lower()
-            is_image = lower.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp'))
-            is_pdf = lower.endswith('.pdf') # PDF判定を追加
             
-            st.markdown(f"##### {label}") # ファイル名をタイトルとして表示
+            label = filenames[idx] if idx < len(filenames) else os.path.basename(url)
+            
+            # URLからクエリパラメータ（?以降）を削除して拡張子を判定
+            url_no_query = url.split('?')[0] 
+            lower = url_no_query.lower()
+            
+            is_image = lower.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp')) 
+            is_pdf = lower.endswith('.pdf')
+            
+            st.markdown("---") # 各ファイルの区切り
 
             if is_image:
-                # 画像は st.image でページ内に埋め込み表示
-                # 注意: この時点では use_column_width=True なので非推奨警告が出ます
-                st.image(url, caption="画像ファイル", use_column_width=True)
+                st.markdown("**写真・画像:**")
+                try:
+                    # use_container_width=True で横幅に合わせる（警告解消とリサイズ）
+                    st.image(
+                        url, 
+                        caption="", 
+                        use_container_width=True 
+                    )
+                except Exception:
+                    # 画像表示失敗時は警告とダウンロードリンクを表示
+                    st.warning("⚠️ 画像の表示に失敗しました。")
+                    
+                # 成功・失敗に関わらず、ダウンロードリンクは表示
+                st.markdown(f"🔗 [ファイルを開く/ダウンロード]({url})")
+            
             elif is_pdf:
-                # PDFは iframe を使って同じページ内に埋め込み表示 (元のロジック)
-                st.markdown(f"""
-                    <iframe src="{url}" width="100%" height="600" style="border: none;"></iframe>
-                    <p style='font-size: small;'><a href="{url}" target="_blank">別タブで開く</a></p>
-                """, unsafe_allow_html=True)
+                # PDFはリンクのみ
+                st.info(f"PDFファイルは、このページでは直接表示できません。")
+                st.markdown(f"🔗 [ファイルを開く/ダウンロード]({url})")
+
             else:
                 # その他のファイルはリンクとして提供
-                st.warning(f"このファイルはブラウザでの直接表示をサポートしていません。")
-                st.markdown(f"🔗 [{label} をダウンロード]({url})")
+                st.markdown(f"🔗 [ファイルを開く/ダウンロード]({url})")
 
     except Exception as e:
         st.error(f"添付ファイルの表示に失敗しました: {e}")
@@ -1171,6 +1190,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
