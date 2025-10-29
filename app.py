@@ -366,26 +366,26 @@ def display_attached_files(row_dict, col_url_key, col_filename_key=None):
             return
 
         urls = []; filenames = []
-        # JSON形式で保存されていると仮定して読み込みを試行
+        # URLの解析
         try:
             urls = json.loads(row_dict[col_url_key])
             if not isinstance(urls, list): 
-                urls = [urls] # 1要素のJSON文字列の場合
+                urls = [urls]
         except Exception:
-            # JSONでない場合は、生の文字列をそのまま要素としてリスト化
+            # JSONでない場合は生の文字列を要素としてリスト化
             raw_url = str(row_dict[col_url_key]).strip().strip('"')
-            # 非常に長いGCS署名付きURLが1つだけ保存されているケースに対応
             urls = [raw_url] if raw_url else []
 
+        # ファイル名の解析
         if col_filename_key and col_filename_key in row_dict and row_dict[col_filename_key]:
             try:
                 filenames = json.loads(row_dict[col_filename_key])
                 if not isinstance(filenames, list): filenames = [filenames]
             except Exception:
-                # ファイル名が JSON でない場合、ファイル名列の内容をそのままリスト化
                 raw_filename = str(row_dict[col_filename_key]).strip().strip('"')
                 filenames = [raw_filename] if raw_filename else []
-        # 表示
+        
+        # 表示ロジック
         for idx, url in enumerate(urls):
             if not url:
                 continue
@@ -396,16 +396,17 @@ def display_attached_files(row_dict, col_url_key, col_filename_key=None):
             is_image = lower.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp'))
             is_pdf = lower.endswith('.pdf')
             
-            # --- 修正された表示ロジック ---
+            st.markdown(f"---") # 各ファイルの区切り線
+
             if is_image:
                 # 画像は st.image でページ内に埋め込み表示
                 st.markdown(f"**写真・画像:** {label}")
                 try:
-                    # use_column_width=True で自動リサイズ（Streamlitのネイティブ関数）
+                    # use_column_width=True で自動リサイズ
                     st.image(url, caption=label, use_column_width=True) 
                 except Exception:
                     # 失敗時はリンクと警告を表示
-                    st.warning(f"画像 '{label}' の表示に失敗しました。リンク切れやアクセス権限を確認してください。")
+                    st.warning(f"画像 '{label}' の表示に失敗しました。")
                     st.markdown(f"🔗 [別タブで開く/ダウンロード]({url})")
             
             elif is_pdf:
@@ -417,7 +418,6 @@ def display_attached_files(row_dict, col_url_key, col_filename_key=None):
                 # その他のファイルはリンクとして提供
                 st.markdown(f"**添付ファイル:** {label}")
                 st.markdown(f"🔗 [ファイルを開く/ダウンロード]({url})")
-            # --- 修正された表示ロジックここまで ---
 
     except Exception as e:
         st.error(f"添付ファイルの表示に失敗しました: {e}")
@@ -479,7 +479,8 @@ def page_data_list(sheet_name, title, col_time, col_filter=None, col_memo=None, 
         if not df_valid.empty:
             min_date = df_valid['date_only'].min()
             max_date = df_valid['date_only'].max()
-            default_start = date(2025, 4, 1)
+            # 存在しない日付をデフォルトにするとエラーになるため、適切なデフォルトを設定
+            default_start = min(date(2025, 4, 1), max_date) if isinstance(max_date, date) else date(2025, 4, 1)
             start_date = st.date_input("開始日", value=max(min_date, default_start) if isinstance(min_date, date) else default_start)
             end_date = st.date_input("終了日", value=max_date)
             df = df_valid[(df_valid['date_only'] >= start_date) & (df_valid['date_only'] <= end_date)].drop(columns=['date_only'])
@@ -507,25 +508,27 @@ def page_data_list(sheet_name, title, col_time, col_filter=None, col_memo=None, 
     if sel_idx is not None:
         row = df.loc[sel_idx]
         st.markdown(f"#### 選択された記録 (ID: {sel_idx+1})")
+        
+        # 👇 NameErrorを解消するため、ここで定義します
+        cols_to_skip = [col_url, col_filename] 
+        
         if detail_cols:
             for c in detail_cols:
                 # 添付ファイルの列であればスキップ
                 if c in cols_to_skip:
                     continue
-                
+                    
                 if c in row and pd.notna(row[c]):
+                    # メモや長文はテキスト表示
                     if col_memo == c or '内容' in c or len(str(row[c])) > 200:
-                        # メモや長文は専用の st.text で表示
                         st.markdown(f"**{c}:**")
                         st.text(row[c])
                     else:
-                        # その他の短文（カテゴリ、タイムスタンプなど）は st.write で表示
                         st.write(f"**{c}:** {row[c]}")
 
-        # 添付ファイルの表示は必ずこのセクションで行う
+        # 添付ファイルの表示
         if col_url and col_url in row:
             st.markdown("##### 添付ファイル")
-            # 👇 display_attached_files に処理を完全に任せる
             display_attached_files(row, col_url, col_filename)
 # ---------------------------
 # --- エピノートページ ---
@@ -1180,6 +1183,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
