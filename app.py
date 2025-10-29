@@ -359,19 +359,19 @@ def display_attached_files(row_dict, col_url_key, col_filename_key=None):
     row_dict: pandas Series / dict representing a row
     col_url_key: key name of the URL field (保存時は JSON array を期待)
     col_filename_key: key name of filenames (optional, JSON array)
-    表示は st.image(..., use_container_width=True) で行う（自動リサイズ）
     """
     try:
         if col_url_key not in row_dict or not row_dict[col_url_key]:
             st.info("添付ファイルはありません。")
             return
 
-        # URLとファイル名を取得する既存のロジックはそのまま
         urls = []; filenames = []
+        # JSON形式で保存されていると仮定して読み込みを試行
         try:
             urls = json.loads(row_dict[col_url_key])
             if not isinstance(urls, list): urls = [urls]
         except Exception:
+            # JSONでない場合はカンマ区切りとして処理 (既存ロジックの互換性維持)
             urls = [s.strip().strip('"') for s in str(row_dict[col_url_key]).split(',') if s.strip()]
 
         if col_filename_key and col_filename_key in row_dict and row_dict[col_filename_key]:
@@ -379,37 +379,59 @@ def display_attached_files(row_dict, col_url_key, col_filename_key=None):
                 filenames = json.loads(row_dict[col_filename_key])
                 if not isinstance(filenames, list): filenames = [filenames]
             except Exception:
-                filenames = []
+                filenames = [os.path.basename(u) for u in urls] # ファイル名が見つからない場合はURLから推測
         
         # 表示
         for idx, url in enumerate(urls):
             if not url:
                 continue
+            
             label = filenames[idx] if idx < len(filenames) else os.path.basename(url)
             lower = url.lower()
-            is_image = lower.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp'))
-            is_pdf = lower.endswith('.pdf') # PDF判定を追加
             
-            st.markdown(f"##### {label}")
-
+            is_image = lower.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp'))
+            is_pdf = lower.endswith('.pdf')
+            
+            # --- 修正された表示ロジック ---
             if is_image:
                 # 画像は st.image でページ内に埋め込み表示
-                st.image(url, caption="画像ファイル", use_column_width=True)
+                st.markdown(f"**写真・画像:** {label}")
+                try:
+                    # use_column_width=True で自動リサイズ（Streamlitのネイティブ関数）
+                    st.image(url, caption=label, use_column_width=True) 
+                except Exception:
+                    # 失敗時はリンクと警告を表示
+                    st.warning(f"画像 '{label}' の表示に失敗しました。リンク切れやアクセス権限を確認してください。")
+                    st.markdown(f"🔗 [別タブで開く/ダウンロード]({url})")
+            
             elif is_pdf:
-                # PDFは iframe を使って同じページ内に埋め込み表示
-                # 注意: GCSのURLが公開されている必要があります。
-                st.markdown(f"""
-                    <iframe src="{url}" width="100%" height="600" style="border: none;"></iframe>
-                    <p style='font-size: small;'><a href="{url}" target="_blank">別タブで開く</a></p>
-                """, unsafe_allow_html=True)
+                # PDFはリンクとして提供し、HTML埋め込みは回避
+                st.markdown(f"**PDFファイル:** {label}")
+                st.markdown(f"🔗 [別タブでPDFファイルを開く]({url})")
+
             else:
-                # その他のファイルはリンク（別ページへ）またはダウンロードボタンとして提供
-                # ダウンロードボタンの方がユーザー体験が良い場合が多いです。
-                st.warning(f"このファイルはブラウザでの直接表示をサポートしていません。")
-                st.markdown(f"🔗 [{label} をダウンロード]({url})")
+                # その他のファイルはリンクとして提供
+                st.markdown(f"**添付ファイル:** {label}")
+                st.markdown(f"🔗 [ファイルを開く/ダウンロード]({url})")
+            # --- 修正された表示ロジックここまで ---
 
     except Exception as e:
         st.error(f"添付ファイルの表示に失敗しました: {e}")
+
+
+def page_epi_note_list():
+    detail_cols = [EPI_COL_TIMESTAMP, EPI_COL_CATEGORY, EPI_COL_NOTE_TYPE, EPI_COL_MEMO, EPI_COL_FILENAME]
+    page_data_list(
+        sheet_name=SHEET_EPI_DATA,
+        title="エピノート",
+        col_time=EPI_COL_TIMESTAMP,
+        col_filter=EPI_COL_CATEGORY,
+        col_memo=EPI_COL_MEMO,
+        col_url=EPI_COL_FILE_URL,
+        detail_cols=detail_cols,
+        col_filename=EPI_COL_FILENAME
+    )
+# ... (後略: page_mainte_list など、他のリスト表示関数もすべて page_data_list を呼び出しており、page_data_list が display_attached_files を呼び出しているため、自動的に新しい表示方法が適用されます。) ...
 
 # ---------------------------
 # --- ユーティリティ参照 ---
@@ -1152,6 +1174,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
