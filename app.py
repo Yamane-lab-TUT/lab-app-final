@@ -1245,6 +1245,13 @@ def page_calendar():
     
     # --- 2. Googleカレンダーの埋め込み（省略） ---
     st.subheader("予約カレンダー（Googleカレンダー）")
+    # CALENDAR_ID が定義されている前提
+    try:
+        CALENDAR_ID
+    except NameError:
+        # 暫定的な定義（エラー防止）
+        CALENDAR_ID = "yamane.lab.6747@gmail.com"
+
     calendar_html = f"""
     <iframe src="https://calendar.google.com/calendar/embed?height=600&wkst=1&bgcolor=%23ffffff&ctz=Asia%2FTokyo&src={CALENDAR_ID}&color=%237986CB&showTitle=0&showPrint=0&showCalendars=0&showTz=0" style="border-width:0" width="100%" height="600" frameborder="0" scrolling="no"></iframe>
     """
@@ -1257,19 +1264,16 @@ def page_calendar():
     # -----------------------------------------------------
     st.subheader("🗓️ 新規予定の登録")
     
-    # 登録者名（これはフォーム内で使うため、セッションステートから初期値のみ取得）
     initial_user_name = st.session_state.get('user_name', '')
     
-    # カテゴリ選択とカスタム入力欄をフォームの外に出す
+    # --- フォームの外に配置する要素: カテゴリ選択とカスタム入力欄 ---
     col_cat, col_other = st.columns([1, 2])
     
     with col_cat:
-        # 💡 st.selectboxをフォーム外に配置
         category = st.selectbox("作業/装置カテゴリ", CATEGORY_OPTIONS, key="category_select_outside")
         
     custom_category = ""
     with col_other:
-        # 💡 選択が 'その他入力' の場合にのみ、カスタム入力フィールドを即座に表示
         if category == "その他入力":
             custom_category = st.text_input(
                 "カスタムカテゴリを直接入力", 
@@ -1280,8 +1284,8 @@ def page_calendar():
     # 最終カテゴリ名を決定 (submitボタンが押される前に確定)
     final_category = custom_category if category == "その他入力" else category
     
-    # 💡 ユーザー名がフォーム内の入力に依存するため、タイトルは仮表示
-    st.markdown(f"**💡 予定のタイトル（登録者名入力後確定）:** `{initial_user_name} ({final_category})`")
+    # 💡 フォームの外では、タイトルは仮表示に留める（デザイン調整のためこの行を削除またはコメントアウト）
+    # st.markdown(f"**💡 予定のタイトル（登録者名入力後確定）:** `{initial_user_name} ({final_category})`")
     st.markdown("---") 
 
     # -----------------------------------------------------
@@ -1289,15 +1293,20 @@ def page_calendar():
     # -----------------------------------------------------
     with st.form(key='schedule_form'):
         
-        # 登録者名（フォーム内のウィジェットとして定義）
+        # 1. 登録者名
         user_name = st.text_input("登録者名 / グループ名", value=initial_user_name)
         
-        # 💡 フォーム外で決定したカテゴリ名を再確認のために表示
+        # 2. 選択されたカテゴリの表示をフォーム内に移動
+        # 💡 これが「枠からはみ出さない」ための修正です。
         st.markdown(f"**📚 選択されたカテゴリ:** `{final_category}`") 
         
+        # 3. 予定タイトルを計算し表示
+        final_title_preview = f"{user_name} ({final_category})" if user_name and final_category else ""
+        st.markdown(f"**💡 予定のタイトル:** `{final_title_preview}`")
+
         st.markdown("---")
         
-        # 開始日時と終了日時
+        # 4. 開始日時と終了日時
         st.markdown("##### 予定日時")
         
         cols_start_date, cols_start_time = st.columns(2)
@@ -1308,7 +1317,7 @@ def page_calendar():
         end_date = cols_end_date.date_input("終了日", value=date.today())
         end_time_str = cols_end_time.text_input("終了時刻 (例: 11:00)", value="11:00")
         
-        # 詳細（メモ）
+        # 5. 詳細（メモ）
         detail = st.text_area("詳細（予定の内容）", height=100)
         
         submit_button = st.form_submit_button(label='⬆️ Googleカレンダーに自動登録')
@@ -1331,6 +1340,15 @@ def page_calendar():
 
             try:
                 # 日時オブジェクトの生成
+                # (既存のコードを省略。ここで必要なライブラリや関数が定義されていることを前提とする)
+                # datetime.combine, datetime.strptime, HttpError, service_account.Credentials, build, SCOPES...
+                
+                # ダミーコードを削除し、実際の処理を記述してください
+                from datetime import datetime
+                from googleapiclient.discovery import build
+                from googleapiclient.errors import HttpError
+                # get_calendar_service が定義されている前提
+                
                 start_dt_obj = datetime.combine(start_date, datetime.strptime(start_time_str, '%H:%M').time())
                 end_dt_obj = datetime.combine(end_date, datetime.strptime(end_time_str, '%H:%M').time())
                 
@@ -1358,7 +1376,6 @@ def page_calendar():
                 st.session_state['user_name'] = user_name 
                 st.success(f"予定 `{final_title}` がカレンダーに自動登録されました！")
                 
-                # 修正済み: st.rerun() で画面を即座に更新
                 st.rerun() 
                     
             except ValueError:
@@ -1410,6 +1427,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
