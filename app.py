@@ -395,10 +395,10 @@ def display_attached_files(row_dict, col_url_key, col_filename_key=None):
             
             st.markdown("---") # 各ファイルの区切り
 
-            if is_image:
+if is_image:
                 st.markdown("**写真・画像:**")
                 # ----------------------------------------------------
-                # ⚠️ 必須修正点: unsafe_allow_html=True を確認
+                # ⚠️ 修正と最終確認: st.markdown で HTML を安全にレンダリングする
                 # max-height: 500px; で縦幅を制限し、width: auto; で縦横比を維持。
                 img_html = f"""
                 <img 
@@ -407,12 +407,12 @@ def display_attached_files(row_dict, col_url_key, col_filename_key=None):
                     style="max-height: 500px; width: auto; display: block; margin-left: auto; margin-right: auto;"
                 >
                 """
-                # HTMLを適用させるために unsafe_allow_html=True が必須
-                st.markdown(img_html, unsafe_allow_html=True)
+                # HTMLを適用させるために unsafe_allow_html=True が必須です。
+                st.markdown(img_html, unsafe_allow_html=True) 
                 # ----------------------------------------------------
 
                 # 画像の下にダウンロードリンク（リンクの表示は最小限に）
-                st.markdown(f"🔗 [ファイルを開く/ダウンロード]({url})") 
+                st.markdown(f"🔗 [ファイルを開く/ダウンロード]({url})")
             
             elif is_pdf:
                 st.info("PDFファイルは、このページでは直接表示できません。")
@@ -1191,6 +1191,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
