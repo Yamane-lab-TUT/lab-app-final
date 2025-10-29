@@ -1166,11 +1166,24 @@ def page_pl_analysis():
 def get_calendar_service():
     """Streamlit Secretsから認証情報を取得し、Google Calendar APIのサービスオブジェクトを構築する"""
     
+    # ⚠️ ここを gcs_credentials に変更します ⚠️
+    SECRETS_KEY_NAME = "gcs_credentials"
+    
     try:
-        # Streamlit Secretsの 'gcp_service_account' キーから JSON 情報を取得
-        # ※このキーには、GCSとカレンダー両方で使用するJSON鍵情報を登録します
-        json_info = st.secrets["gcs_credentials"]
-        
+        # 1. Secrets から鍵情報を取得
+        secret_content = st.secrets[SECRETS_KEY_NAME] 
+
+        # 2. 取得した内容を、JSONとしてパースする
+        if isinstance(secret_content, str):
+            # SecretsがJSON文字列として登録されている場合
+            json_info = json.loads(secret_content)
+        elif isinstance(secret_content, dict):
+            # SecretsがTOML形式（辞書型）として正しく登録されている場合
+            json_info = secret_content
+        else:
+            st.error(f"エラー: Secretsのキー '{SECRETS_KEY_NAME}' のデータ形式が不正です。")
+            return None
+
         # サービスアカウント認証情報を作成
         creds = service_account.Credentials.from_service_account_info(
             json_info, scopes=SCOPES
@@ -1181,14 +1194,18 @@ def get_calendar_service():
         return service
 
     except KeyError:
-        # シークレットが設定されていない場合のエラー
-        st.error("エラー: Streamlit Secretsに 'gcp_service_account' が設定されていません。")
-        st.caption("Streamlit Cloudのアプリ設定画面から、ご提供いただいたJSONキーの内容を登録してください。")
+        # 鍵が見つからない場合のエラーメッセージもキー名に合わせて修正
+        st.error(f"重大エラー: Streamlit Secretsにキー '{SECRETS_KEY_NAME}' が見つかりません。")
+        st.caption(f"Secrets設定画面で、キー名が [{SECRETS_KEY_NAME}] であることを確認し、アプリを再起動してください。")
+        return None
+    except json.JSONDecodeError:
+        st.error(f"エラー: Secretsのキー '{SECRETS_KEY_NAME}' に登録された鍵情報が不正なJSON形式です。")
+        st.caption("登録内容に余計な文字や引用符が含まれていないか確認してください。")
         return None
     except Exception as e:
-        # HttpError など、認証後のAPIエラーを捕捉
+        # ... (その他のエラー処理)
         if isinstance(e, HttpError):
-            st.error(f"カレンダーAPIエラー: ターゲットカレンダーにサービスアカウントの「予定の変更権限」があるか確認してください。詳細: {e.content.decode()}")
+            st.error(f"カレンダーAPIエラー: 権限を確認してください。詳細: {e.content.decode()}")
         else:
             st.error(f"Google Calendar APIの初期化に失敗しました: {e}")
         return None
@@ -1372,6 +1389,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
