@@ -1222,12 +1222,9 @@ def page_calendar():
         # 暫定的な定義
         CATEGORY_OPTIONS = ["D1エピ", "D2エピ", "MBEメンテ", "XRD", "PL", "AFM", "フォトリソ", "アニール", "蒸着", "その他入力"]
 
-    # --- 1. 外部予約サイトへのリンク ---
+    # --- 1. 外部予約サイトへのリンク（省略） ---
     st.subheader("外部予約サイト")
-    
     col_evers, col_rac = st.columns(2)
-    
-    # Evers 予約サイト
     evers_url = "https://www.eiiris.tut.ac.jp/evers/Web/dashboard.php"
     col_evers.markdown(
         f'<a href="{evers_url}" target="_blank">'
@@ -1236,8 +1233,6 @@ def page_calendar():
         unsafe_allow_html=True
     )
     col_evers.caption("（学内共用装置予約システム）")
-
-    # 教育研究基盤センター 予約ポータル
     rac_url = "https://tech.rac.tut.ac.jp/regist/potal_0.php"
     col_rac.markdown(
         f'<a href="{rac_url}" target="_blank">'
@@ -1246,51 +1241,59 @@ def page_calendar():
         unsafe_allow_html=True
     )
     col_rac.caption("（共用施設利用登録）")
-
     st.markdown("---")
     
-    # --- 2. Googleカレンダーの埋め込み ---
+    # --- 2. Googleカレンダーの埋め込み（省略） ---
     st.subheader("予約カレンダー（Googleカレンダー）")
-
     calendar_html = f"""
     <iframe src="https://calendar.google.com/calendar/embed?height=600&wkst=1&bgcolor=%23ffffff&ctz=Asia%2FTokyo&src={CALENDAR_ID}&color=%237986CB&showTitle=0&showPrint=0&showCalendars=0&showTz=0" style="border-width:0" width="100%" height="600" frameborder="0" scrolling="no"></iframe>
     """
-    
     st.markdown(calendar_html, unsafe_allow_html=True)
-    
     st.caption("カレンダーの予約状況を確認し、以下のフォームから予定を登録してください。")
     st.markdown("---") 
 
-    # --- 3. 新規予定登録フォーム ---
+    # -----------------------------------------------------
+    # --- 3. 予約登録の制御部分（フォーム外で即時応答を実現） ---
+    # -----------------------------------------------------
     st.subheader("🗓️ 新規予定の登録")
     
+    # 登録者名（これはフォーム内で使うため、セッションステートから初期値のみ取得）
+    initial_user_name = st.session_state.get('user_name', '')
+    
+    # カテゴリ選択とカスタム入力欄をフォームの外に出す
+    col_cat, col_other = st.columns([1, 2])
+    
+    with col_cat:
+        # 💡 st.selectboxをフォーム外に配置
+        category = st.selectbox("作業/装置カテゴリ", CATEGORY_OPTIONS, key="category_select_outside")
+        
+    custom_category = ""
+    with col_other:
+        # 💡 選択が 'その他入力' の場合にのみ、カスタム入力フィールドを即座に表示
+        if category == "その他入力":
+            custom_category = st.text_input(
+                "カスタムカテゴリを直接入力", 
+                placeholder="例: 学会発表準備", 
+                key="custom_category_input_cal_outside"
+            ) 
+    
+    # 最終カテゴリ名を決定 (submitボタンが押される前に確定)
+    final_category = custom_category if category == "その他入力" else category
+    
+    # 💡 ユーザー名がフォーム内の入力に依存するため、タイトルは仮表示
+    st.markdown(f"**💡 予定のタイトル（登録者名入力後確定）:** `{initial_user_name} ({final_category})`")
+    st.markdown("---") 
+
+    # -----------------------------------------------------
+    # --- 4. フォーム本体 ---
+    # -----------------------------------------------------
     with st.form(key='schedule_form'):
         
-        # 登録者名
-        user_name = st.text_input("登録者名 / グループ名", value=st.session_state.get('user_name', ''))
+        # 登録者名（フォーム内のウィジェットとして定義）
+        user_name = st.text_input("登録者名 / グループ名", value=initial_user_name)
         
-        # カテゴリ選択とタイトル自動生成
-        col_cat, col_other = st.columns([1, 2])
-        
-        with col_cat:
-            # 💡 フォーム内でも、st.selectboxが更新されると即座にこのブロック内は再実行される
-            category = st.selectbox("作業/装置カテゴリ", CATEGORY_OPTIONS, key="category_select")
-            
-        custom_category = ""
-        with col_other:
-            # 💡 選択が 'その他入力' の場合にのみ、カスタム入力フィールドを配置
-            if category == "その他入力":
-                custom_category = st.text_input(
-                    "カスタムカテゴリを直接入力", 
-                    placeholder="例: 学会発表準備", 
-                    key="custom_category_input_cal"
-                ) 
-        
-        # タイトルの生成
-        final_category = custom_category if category == "その他入力" else category
-        default_title = f"{user_name} ({final_category})" if user_name and final_category else ""
-        
-        st.markdown(f"**💡 予定のタイトル:** `{default_title}`")
+        # 💡 フォーム外で決定したカテゴリ名を再確認のために表示
+        st.markdown(f"**📚 選択されたカテゴリ:** `{final_category}`") 
         
         st.markdown("---")
         
@@ -1311,9 +1314,13 @@ def page_calendar():
         submit_button = st.form_submit_button(label='⬆️ Googleカレンダーに自動登録')
 
         if submit_button:
+            # フォーム内の user_name と、フォーム外の final_category を使用
             if not user_name or not final_category:
                 st.error("「登録者名」と「作業カテゴリ」は必須です。")
                 return 
+            
+            # 最終タイトルを確定
+            final_title = f"{user_name} ({final_category})"
 
             # ----------------------------------------
             # API経由で直接カレンダーに書き込み 
@@ -1331,9 +1338,9 @@ def page_calendar():
                     st.error("終了日時は開始日時より後に設定してください。")
                     return
 
-                # 予定のボディを作成 (ISO 8601形式が必要)
+                # 予定のボディを作成
                 event_body = {
-                    'summary': default_title,
+                    'summary': final_title,
                     'description': detail,
                     'start': {
                         'dateTime': start_dt_obj.isoformat(),
@@ -1349,9 +1356,9 @@ def page_calendar():
                 event = service.events().insert(calendarId=CALENDAR_ID, body=event_body).execute()
                 
                 st.session_state['user_name'] = user_name 
-                st.success(f"予定 `{default_title}` がカレンダーに自動登録されました！")
+                st.success(f"予定 `{final_title}` がカレンダーに自動登録されました！")
                 
-                # st.rerun() で画面を即座に更新
+                # 修正済み: st.rerun() で画面を即座に更新
                 st.rerun() 
                     
             except ValueError:
@@ -1359,7 +1366,6 @@ def page_calendar():
             except HttpError as e:
                 st.error(f"カレンダー登録に失敗しました。権限とカレンダーIDを確認してください。詳細: {e.content.decode()}")
             except Exception as e:
-                # 予期せぬエラーの表示
                 st.error(f"予定の登録中に予期せぬエラーが発生しました: {e}")
 # ---------------------------
 # --- メインルーティング ---
@@ -1404,6 +1410,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
