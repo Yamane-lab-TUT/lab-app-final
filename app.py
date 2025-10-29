@@ -1213,18 +1213,19 @@ def page_calendar():
         
         # カテゴリ選択とタイトル自動生成
         col_cat, col_other = st.columns([1, 2])
-        category = col_cat.selectbox("作業/装置カテゴリ", CATEGORY_OPTIONS)
         
-        custom_category = ""
-        # ⚠️ 修正点: 「その他入力」が選択された場合のみ、隣のカラムにテキストボックスを表示
-        if category == "その他入力":
-            custom_category = col_other.text_input("カテゴリを直接入力", placeholder="例: 学会発表準備")
-        else:
-            # 「その他入力」が選ばれていない場合、スペースを確保するためにもう一方のカラムは空にしておく
-            col_other.empty() 
+        # ⚠️ 修正点: with ブロックでカラム内の描画を明確にする
+        with col_cat:
+            category = st.selectbox("作業/装置カテゴリ", CATEGORY_OPTIONS)
             
-        # タイトルの生成
-        final_category = custom_category if category == "その他入力" else category
+        custom_category = ""
+        with col_other:
+            if category == "その他入力":
+                # 「その他入力」が選択された場合のみ、隣に入力欄を表示
+                custom_category = st.text_input("カテゴリを直接入力", placeholder="例: 学会発表準備", key="custom_category_input")
+        
+        # タイトルの生成 (カスタム入力が空でなければそれを使用。空であれば選択されたカテゴリを使用)
+        final_category = custom_category if custom_category else category
         default_title = f"{user_name} ({final_category})" if user_name and final_category else ""
         
         st.markdown(f"**💡 予定のタイトル:** `{default_title}`")
@@ -1280,21 +1281,6 @@ def page_calendar():
                     st.error("時刻のフォーマットが無効です。「HH:MM」の形式で入力してください。")
                 except Exception as e:
                     st.error(f"予定の登録中にエラーが発生しました: {e}")
-
-    # ------------------------------------
-    # --- 3. Googleカレンダーの埋め込み ---
-    # ------------------------------------
-    st.subheader("予約カレンダー（Googleカレンダー）")
-
-    # GoogleカレンダーIDをそのまま使用
-    calendar_id = "yamane.lab.6747@gmail.com" 
-    calendar_html = f"""
-    <iframe src="https://calendar.google.com/calendar/embed?height=600&wkst=1&bgcolor=%23ffffff&ctz=Asia%2FTokyo&src={calendar_id}&color=%237986CB&showTitle=0&showPrint=0&showCalendars=0&showTz=0" style="border-width:0" width="100%" height="600" frameborder="0" scrolling="no"></iframe>
-    """
-    
-    st.markdown(calendar_html, unsafe_allow_html=True)
-    
-    st.caption("カレンダーへの反映にはGoogle Apps Scriptなどを使った連携が必要です。このフォームのデータは別シートに保存されます。")
 # ---------------------------
 # --- メインルーティング ---
 # ---------------------------
@@ -1338,6 +1324,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
