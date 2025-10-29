@@ -1149,20 +1149,21 @@ def page_pl_analysis():
     except Exception as e:
         st.error(f"Excel出力に失敗しました: {e}")
 
-# ---------------------------
-# --- 未実装/簡易ページ（カレンダー等） ---
-# ---------------------------
 # --------------------------
-# --- 予約・カレンダーページ（外部サイト連携版） ---
+# --- 予約・カレンダーページ（条件付き入力欄表示修正版） ---
 # --------------------------
 # app (2).py の page_calendar 関数をこのコードで完全に置き換え
 
 # --------------------------
-# --- 予約・カレンダーページ（条件付き入力欄表示修正版） ---
+# --- 予約・カレンダーページ（Googleカレンダー連携版） ---
 # --------------------------
 def page_calendar():
     st.header("🗓️ スケジュール・装置予約")
     
+    # セッションステートに成功メッセージとURLを格納するキーを定義
+    if 'calendar_success_msg' not in st.session_state:
+        st.session_state['calendar_success_msg'] = None
+
     # --- 1. 外部予約サイトへのリンク ---
     st.subheader("外部予約サイト")
     
@@ -1200,8 +1201,13 @@ def page_calendar():
     
     st.markdown(calendar_html, unsafe_allow_html=True)
     
-    st.caption("このカレンダーの予約状況を確認し、以下のフォームから予定を登録してください。")
+    st.caption("カレンダーの予約状況を確認し、以下のフォームから予定を登録してください。")
     st.markdown("---") 
+
+    # 成功メッセージとリンクをフォームの上に表示
+    if st.session_state['calendar_success_msg']:
+        st.success(st.session_state['calendar_success_msg'])
+        st.session_state['calendar_success_msg'] = None # メッセージをクリア
 
     # --- 3. 新規予定登録フォーム ---
     st.subheader("🗓️ 新規予定の登録")
@@ -1214,17 +1220,15 @@ def page_calendar():
         # カテゴリ選択とタイトル自動生成
         col_cat, col_other = st.columns([1, 2])
         
-        # ⚠️ 修正点: with ブロックでカラム内の描画を明確にする
         with col_cat:
             category = st.selectbox("作業/装置カテゴリ", CATEGORY_OPTIONS)
             
         custom_category = ""
         with col_other:
             if category == "その他入力":
-                # 「その他入力」が選択された場合のみ、隣に入力欄を表示
                 custom_category = st.text_input("カテゴリを直接入力", placeholder="例: 学会発表準備", key="custom_category_input")
         
-        # タイトルの生成 (カスタム入力が空でなければそれを使用。空であれば選択されたカテゴリを使用)
+        # タイトルの生成
         final_category = custom_category if custom_category else category
         default_title = f"{user_name} ({final_category})" if user_name and final_category else ""
         
@@ -1246,7 +1250,7 @@ def page_calendar():
         # 詳細（メモ）
         detail = st.text_area("詳細（予定の内容）", height=100)
         
-        submit_button = st.form_submit_button(label='⬆️ スケジュールに登録')
+        submit_button = st.form_submit_button(label='⬆️ Googleカレンダーで予定を作成')
 
         if submit_button:
             if not user_name or not final_category:
@@ -1260,27 +1264,41 @@ def page_calendar():
                     if end_dt_obj <= start_dt_obj:
                         st.error("終了日時は開始日時より後に設定してください。")
                     else:
-                        new_data = {
-                            SCH_COL_TIMESTAMP: datetime.now().strftime('%Y/%m/%d %H:%M:%S'),
-                            SCH_COL_TITLE: default_title,
-                            SCH_COL_DETAIL: detail,
-                            SCH_COL_START_DATETIME: start_dt_obj.strftime('%Y/%m/%d %H:%M'),
-                            SCH_COL_END_DATETIME: end_dt_obj.strftime('%Y/%m/%d %H:%M'),
-                            SCH_COL_USER: user_name,
-                        }
+                        # --- Google Calendar URL生成ロジック ---
                         
-                        # データ登録
-                        append_data_to_sheet(SHEET_SCHEDULE_DATA, new_data)
+                        # タイムスタンプを Google Calendar 形式にフォーマット (YYYYMMDDTHHMMSS)
+                        cal_start = start_dt_obj.strftime('%Y%m%dT%H%M%S')
+                        cal_end = end_dt_obj.strftime('%Y%m%dT%H%M%S')
+                        dates_param = f"{cal_start}/{cal_end}"
                         
-                        # 登録者名をセッションに保存
+                        # タイトルと詳細を URL エンコード
+                        title_encoded = url_quote(default_title)
+                        detail_encoded = url_quote(detail)
+                        
+                        # Google Calendar 予定作成 URL
+                        calendar_url = (
+                            "https://calendar.google.com/calendar/r/eventedit?"
+                            f"text={title_encoded}"
+                            f"&dates={dates_param}"
+                            f"&details={detail_encoded}"
+                            f"&src={calendar_id}" # 登録先カレンダーIDをプリセット
+                            "&sf=true&output=xml"
+                        )
+                        
+                        # 成功メッセージとリンクをセッションに格納し、リロード
                         st.session_state['user_name'] = user_name 
-                        st.success(f"予定 `{default_title}` を登録しました！")
+                        st.session_state['calendar_success_msg'] = (
+                            f"予定 `{default_title}` の詳細を生成しました。下のボタンをクリックしてカレンダーで登録を完了してください。"
+                            f'<br><br><a href="{calendar_url}" target="_blank">'
+                            f'<button style="width:100%; height:40px; background-color:#F4B400; color:white; border:none; border-radius:5px; cursor:pointer;">'
+                            f'✅ カレンダーを開いて最終登録する (新しいタブで開きます)</button></a>'
+                        )
                         st.experimental_rerun()
                         
                 except ValueError:
                     st.error("時刻のフォーマットが無効です。「HH:MM」の形式で入力してください。")
                 except Exception as e:
-                    st.error(f"予定の登録中にエラーが発生しました: {e}")
+                    st.error(f"予定の処理中にエラーが発生しました: {e}")
 # ---------------------------
 # --- メインルーティング ---
 # ---------------------------
@@ -1324,6 +1342,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
