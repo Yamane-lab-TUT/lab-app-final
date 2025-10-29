@@ -369,18 +369,22 @@ def display_attached_files(row_dict, col_url_key, col_filename_key=None):
         # JSON形式で保存されていると仮定して読み込みを試行
         try:
             urls = json.loads(row_dict[col_url_key])
-            if not isinstance(urls, list): urls = [urls]
+            if not isinstance(urls, list): 
+                urls = [urls] # 1要素のJSON文字列の場合
         except Exception:
-            # JSONでない場合はカンマ区切りとして処理 (既存ロジックの互換性維持)
-            urls = [s.strip().strip('"') for s in str(row_dict[col_url_key]).split(',') if s.strip()]
+            # JSONでない場合は、生の文字列をそのまま要素としてリスト化
+            raw_url = str(row_dict[col_url_key]).strip().strip('"')
+            # 非常に長いGCS署名付きURLが1つだけ保存されているケースに対応
+            urls = [raw_url] if raw_url else []
 
         if col_filename_key and col_filename_key in row_dict and row_dict[col_filename_key]:
             try:
                 filenames = json.loads(row_dict[col_filename_key])
                 if not isinstance(filenames, list): filenames = [filenames]
             except Exception:
-                filenames = [os.path.basename(u) for u in urls] # ファイル名が見つからない場合はURLから推測
-        
+                # ファイル名が JSON でない場合、ファイル名列の内容をそのままリスト化
+                raw_filename = str(row_dict[col_filename_key]).strip().strip('"')
+                filenames = [raw_filename] if raw_filename else []
         # 表示
         for idx, url in enumerate(urls):
             if not url:
@@ -505,22 +509,24 @@ def page_data_list(sheet_name, title, col_time, col_filter=None, col_memo=None, 
         st.markdown(f"#### 選択された記録 (ID: {sel_idx+1})")
         if detail_cols:
             for c in detail_cols:
+                # 添付ファイルの列であればスキップ
+                if c in cols_to_skip:
+                    continue
+                
                 if c in row and pd.notna(row[c]):
-                    # メモや長文はテキスト表示
                     if col_memo == c or '内容' in c or len(str(row[c])) > 200:
+                        # メモや長文は専用の st.text で表示
                         st.markdown(f"**{c}:**")
                         st.text(row[c])
-                    elif 'URL' in c or 'ファイル' in c:
-                        # 添付は別セクションで処理
-                        continue
                     else:
+                        # その他の短文（カテゴリ、タイムスタンプなど）は st.write で表示
                         st.write(f"**{c}:** {row[c]}")
 
-        # 添付ファイルの表示
+        # 添付ファイルの表示は必ずこのセクションで行う
         if col_url and col_url in row:
             st.markdown("##### 添付ファイル")
+            # 👇 display_attached_files に処理を完全に任せる
             display_attached_files(row, col_url, col_filename)
-
 # ---------------------------
 # --- エピノートページ ---
 # ---------------------------
@@ -1174,6 +1180,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
