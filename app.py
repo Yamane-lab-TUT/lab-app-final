@@ -1192,13 +1192,6 @@ def get_calendar_service():
         else:
             st.error(f"Google Calendar APIの初期化に失敗しました: {e}")
         return None
-3. メイン関数: page_calendar の完全な置き換え
-app (2).py の既存の page_calendar() 関数全体を、以下のコードに完全に置き換えてください。
-
-Python
-
-# app (2).py の page_calendar 関数をこのコードで完全に置き換え
-
 # --------------------------
 # --- 予約・カレンダーページ（Googleカレンダー自動登録版） ---
 # --------------------------
@@ -1379,6 +1372,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
