@@ -354,16 +354,13 @@ def upload_file_to_gcs(storage_client_obj, file_obj, folder_name):
 # ---------------------------
 # --- 添付ファイル表示ユーティリティ（自動リサイズ） ---
 # ---------------------------
-# ---------------------------
-# --- 添付ファイル表示ユーティリティ（自動リサイズ） ---
-# ---------------------------
+
 def display_attached_files(row_dict, col_url_key, col_filename_key=None):
     """
     row_dict: pandas Series / dict representing a row
     col_url_key: key name of the URL field (保存時は JSON array を期待)
     col_filename_key: key name of filenames (optional, JSON array)
     """
-    # ... (URLとファイル名の解析ロジックは省略) ...
     try:
         if col_url_key not in row_dict or not row_dict[col_url_key]:
             st.info("添付ファイルはありません。")
@@ -401,9 +398,8 @@ def display_attached_files(row_dict, col_url_key, col_filename_key=None):
             if is_image:
                 st.markdown("**写真・画像:**")
                 # ----------------------------------------------------
-                # ⚠️ 修正点: st.image を避け、HTMLで強制的に表示し、CSSで縦幅を制限
-                # max-height: 500px; は縦幅を最大500pxに制限し、width: auto; で縦横比を維持します。
-                # Streamlitのセキュリティを無効化する unsafe_allow_html=True が必要です。
+                # ⚠️ 必須修正点: unsafe_allow_html=True を確認
+                # max-height: 500px; で縦幅を制限し、width: auto; で縦横比を維持。
                 img_html = f"""
                 <img 
                     src="{url}" 
@@ -411,6 +407,7 @@ def display_attached_files(row_dict, col_url_key, col_filename_key=None):
                     style="max-height: 500px; width: auto; display: block; margin-left: auto; margin-right: auto;"
                 >
                 """
+                # HTMLを適用させるために unsafe_allow_html=True が必須
                 st.markdown(img_html, unsafe_allow_html=True)
                 # ----------------------------------------------------
 
@@ -428,7 +425,11 @@ def display_attached_files(row_dict, col_url_key, col_filename_key=None):
         # 例外発生時も、st.markdownのHTMLが原因でないかチェックしやすいようにする
         st.error(f"添付ファイルの表示処理中にエラーが発生しました: {e}")
         st.warning("⚠️ 画像の表示に失敗しました。")
-        st.markdown(f"🔗 [元のリンクを開く]({url})")
+        # 最後に安全なリンクを表示
+        try:
+             st.markdown(f"🔗 [元のリンクを開く]({url})")
+        except:
+             pass # urlが未定義の場合のエラー防止
 
 def page_epi_note_list():
     detail_cols = [EPI_COL_TIMESTAMP, EPI_COL_CATEGORY, EPI_COL_NOTE_TYPE, EPI_COL_MEMO, EPI_COL_FILENAME]
@@ -1190,6 +1191,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
