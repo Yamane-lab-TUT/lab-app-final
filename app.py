@@ -1153,7 +1153,35 @@ def page_pl_analysis():
 # --- 予約・カレンダーページ（条件付き入力欄表示修正版） ---
 # --------------------------
 # app (2).py の page_calendar 関数をこのコードで完全に置き換え
+def get_calendar_service():
+    """Streamlit Secretsから認証情報を取得し、Google Calendar APIのサービスオブジェクトを構築する"""
+    
+    try:
+        # Streamlit Secretsの 'gcp_service_account' キーから JSON 情報を取得
+        # ※このキーには、GCSとカレンダー両方で使用するJSON鍵情報を登録します
+        json_info = st.secrets["gcp_service_account"]
+        
+        # サービスアカウント認証情報を作成
+        creds = service_account.Credentials.from_service_account_info(
+            json_info, scopes=SCOPES
+        )
+        
+        # Calendar APIクライアントを作成
+        service = build('calendar', 'v3', credentials=creds)
+        return service
 
+    except KeyError:
+        # シークレットが設定されていない場合のエラー
+        st.error("エラー: Streamlit Secretsに 'gcp_service_account' が設定されていません。")
+        st.caption("Streamlit Cloudのアプリ設定画面から、ご提供いただいたJSONキーの内容を登録してください。")
+        return None
+    except Exception as e:
+        # HttpError など、認証後のAPIエラーを捕捉
+        if isinstance(e, HttpError):
+            st.error(f"カレンダーAPIエラー: ターゲットカレンダーにサービスアカウントの「予定の変更権限」があるか確認してください。詳細: {e.content.decode()}")
+        else:
+            st.error(f"Google Calendar APIの初期化に失敗しました: {e}")
+        return None
 # --------------------------
 # --- 予約・カレンダーページ（Googleカレンダー連携版） ---
 # --------------------------
@@ -1342,6 +1370,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
