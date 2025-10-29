@@ -1138,10 +1138,55 @@ def page_pl_analysis():
 # ---------------------------
 # --- 未実装/簡易ページ（カレンダー等） ---
 # ---------------------------
+# --------------------------
+# --- 予約・カレンダーページ（外部サイト連携版） ---
+# --------------------------
 def page_calendar():
-    st.header("🗓️ スケジュール・装置予約")
-    st.info("このページは簡易実装です。必要であれば予約システムと連携可能です。")
+    st.header("🗓️ 装置予約・スケジュール")
+    
+    # ------------------------------------
+    # --- 1. 外部予約サイトへのリンク ---
+    # ------------------------------------
+    st.subheader("外部予約サイト")
+    
+    col_evers, col_rac = st.columns(2)
+    
+    # Evers 予約サイト
+    evers_url = "https://www.eiiris.tut.ac.jp/evers/Web/dashboard.php"
+    col_evers.markdown(
+        f'<a href="{evers_url}" target="_blank">'
+        f'<button style="width:100%; height:40px; background-color:#4CAF50; color:white; border:none; border-radius:5px; cursor:pointer;">'
+        f'Evers 予約サイトへアクセス</button></a>',
+        unsafe_allow_html=True
+    )
+    col_evers.caption("（学内共用装置予約システム）")
 
+    # 教育研究基盤センター 予約ポータル
+    rac_url = "https://tech.rac.tut.ac.jp/regist/potal_0.php"
+    col_rac.markdown(
+        f'<a href="{rac_url}" target="_blank">'
+        f'<button style="width:100%; height:40px; background-color:#2196F3; color:white; border:none; border-radius:5px; cursor:pointer;">'
+        f'教育研究基盤センター ポータルへ</button></a>',
+        unsafe_allow_html=True
+    )
+    col_rac.caption("（共用施設利用登録）")
+
+    st.markdown("---")
+
+    # ------------------------------------
+    # --- 2. Googleカレンダーの埋め込み ---
+    # ------------------------------------
+    st.subheader("予約カレンダー（Googleカレンダー）")
+
+    # ⚠️ 修正点: YOUR_CALENDAR_ID を提供されたIDに置き換えました
+    calendar_id = "yamane.lab.6747@gmail.com" 
+    calendar_html = f"""
+    <iframe src="https://calendar.google.com/calendar/embed?height=600&wkst=1&bgcolor=%23ffffff&ctz=Asia%2FTokyo&src={calendar_id}&color=%237986CB&showTitle=0&showPrint=0&showCalendars=0&showTz=0" style="border-width:0" width="100%" height="600" frameborder="0" scrolling="no"></iframe>
+    """
+    
+    st.markdown(calendar_html, unsafe_allow_html=True)
+    
+    st.caption("埋め込みカレンダーは、Googleカレンダーの設定で「一般公開」または「組織内で公開」されている必要があります。")
 # ---------------------------
 # --- メインルーティング ---
 # ---------------------------
@@ -1185,6 +1230,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
