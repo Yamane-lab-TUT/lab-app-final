@@ -1286,12 +1286,22 @@ def page_calendar():
         st.markdown("##### 予定日時")
         
         cols_start_date, cols_start_time = st.columns(2)
+        # st.date_input はそのまま
         start_date = cols_start_date.date_input("開始日", value=date.today())
-        start_time_str = cols_start_time.text_input("開始時刻 (例: 09:00)", value="09:00")
+        
+        # ⏰ 開始時刻を st.time_input に変更 
+        # time_input は datetime.time オブジェクトを返す
+        start_time_obj = cols_start_time.time_input("開始時刻", value=datetime.strptime("09:00", '%H:%M').time())
 
         cols_end_date, cols_end_time = st.columns(2)
+        # st.date_input はそのまま
         end_date = cols_end_date.date_input("終了日", value=date.today())
-        end_time_str = cols_end_time.text_input("終了時刻 (例: 11:00)", value="11:00")
+        
+        # ⏰ 終了時刻を st.time_input に変更
+        end_time_obj = cols_end_time.time_input("終了時刻", value=datetime.strptime("11:00", '%H:%M').time())
+        
+        # 💡 st.time_input を使った場合、時刻のオブジェクト (time_obj) は既に正しい形式なので、
+        # 後の API 処理で strftime/strptime を使わずに直接使えます。
         
         # 6. 詳細（メモ）
         detail = st.text_area("詳細（予定の内容）", height=100)
@@ -1315,8 +1325,9 @@ def page_calendar():
                 return 
 
             try:
-                start_dt_obj = datetime.combine(start_date, datetime.strptime(start_time_str, '%H:%M').time())
-                end_dt_obj = datetime.combine(end_date, datetime.strptime(end_time_str, '%H:%M').time())
+                # ⏰ time_input で取得した time_obj を直接使用するため、strptime は不要
+                start_dt_obj = datetime.combine(start_date, start_time_obj) 
+                end_dt_obj = datetime.combine(end_date, end_time_obj)
                 
                 if end_dt_obj <= start_dt_obj:
                     st.error("終了日時は開始日時より後に設定してください。")
@@ -1396,4 +1407,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
