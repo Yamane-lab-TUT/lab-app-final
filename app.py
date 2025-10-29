@@ -125,6 +125,11 @@ CATEGORY_OPTIONS = [
     "D1エピ", "D2エピ", "MBEメンテ", "XRD", "PL", "AFM", "フォトリソ", "アニール", "蒸着", "その他入力"
 ]
 
+# --- Google Calendar API連携用定数 ---
+# 鍵ファイルは st.secrets から読み込むため、ファイル名は不要です
+SCOPES = ['https://www.googleapis.com/auth/calendar']
+CALENDAR_ID = "yamane.lab.6747@gmail.com" # ターゲットカレンダーID
+
 # ---------------------------
 # --- Google Service Stubs ---
 # ---------------------------
@@ -1157,7 +1162,7 @@ def page_pl_analysis():
 # --------------------------
 # --- 予約・カレンダーページ（条件付き入力欄表示修正版） ---
 # --------------------------
-# app (2).py の page_calendar 関数をこのコードで完全に置き換え
+# Google Calendar API接続ユーティリティ
 def get_calendar_service():
     """Streamlit Secretsから認証情報を取得し、Google Calendar APIのサービスオブジェクトを構築する"""
     
@@ -1187,16 +1192,19 @@ def get_calendar_service():
         else:
             st.error(f"Google Calendar APIの初期化に失敗しました: {e}")
         return None
+3. メイン関数: page_calendar の完全な置き換え
+app (2).py の既存の page_calendar() 関数全体を、以下のコードに完全に置き換えてください。
+
+Python
+
+# app (2).py の page_calendar 関数をこのコードで完全に置き換え
+
 # --------------------------
-# --- 予約・カレンダーページ（Googleカレンダー連携版） ---
+# --- 予約・カレンダーページ（Googleカレンダー自動登録版） ---
 # --------------------------
 def page_calendar():
     st.header("🗓️ スケジュール・装置予約")
     
-    # セッションステートに成功メッセージとURLを格納するキーを定義
-    if 'calendar_success_msg' not in st.session_state:
-        st.session_state['calendar_success_msg'] = None
-
     # --- 1. 外部予約サイトへのリンク ---
     st.subheader("外部予約サイト")
     
@@ -1227,20 +1235,14 @@ def page_calendar():
     # --- 2. Googleカレンダーの埋め込み ---
     st.subheader("予約カレンダー（Googleカレンダー）")
 
-    calendar_id = "yamane.lab.6747@gmail.com" 
     calendar_html = f"""
-    <iframe src="https://calendar.google.com/calendar/embed?height=600&wkst=1&bgcolor=%23ffffff&ctz=Asia%2FTokyo&src={calendar_id}&color=%237986CB&showTitle=0&showPrint=0&showCalendars=0&showTz=0" style="border-width:0" width="100%" height="600" frameborder="0" scrolling="no"></iframe>
+    <iframe src="https://calendar.google.com/calendar/embed?height=600&wkst=1&bgcolor=%23ffffff&ctz=Asia%2FTokyo&src={CALENDAR_ID}&color=%237986CB&showTitle=0&showPrint=0&showCalendars=0&showTz=0" style="border-width:0" width="100%" height="600" frameborder="0" scrolling="no"></iframe>
     """
     
     st.markdown(calendar_html, unsafe_allow_html=True)
     
     st.caption("カレンダーの予約状況を確認し、以下のフォームから予定を登録してください。")
     st.markdown("---") 
-
-    # 成功メッセージとリンクをフォームの上に表示
-    if st.session_state['calendar_success_msg']:
-        st.success(st.session_state['calendar_success_msg'])
-        st.session_state['calendar_success_msg'] = None # メッセージをクリア
 
     # --- 3. 新規予定登録フォーム ---
     st.subheader("🗓️ 新規予定の登録")
@@ -1259,7 +1261,7 @@ def page_calendar():
         custom_category = ""
         with col_other:
             if category == "その他入力":
-                custom_category = st.text_input("カテゴリを直接入力", placeholder="例: 学会発表準備", key="custom_category_input")
+                custom_category = st.text_input("カテゴリを直接入力", placeholder="例: 学会発表準備", key="custom_category_input_cal") 
         
         # タイトルの生成
         final_category = custom_category if custom_category else category
@@ -1283,55 +1285,57 @@ def page_calendar():
         # 詳細（メモ）
         detail = st.text_area("詳細（予定の内容）", height=100)
         
-        submit_button = st.form_submit_button(label='⬆️ Googleカレンダーで予定を作成')
+        submit_button = st.form_submit_button(label='⬆️ Googleカレンダーに自動登録')
 
         if submit_button:
             if not user_name or not final_category:
                 st.error("「登録者名」と「作業カテゴリ」は必須です。")
-            else:
-                try:
-                    # 日時オブジェクトの生成
-                    start_dt_obj = datetime.combine(start_date, datetime.strptime(start_time_str, '%H:%M').time())
-                    end_dt_obj = datetime.combine(end_date, datetime.strptime(end_time_str, '%H:%M').time())
+                return 
+
+            # ----------------------------------------
+            # ✅ API経由で直接カレンダーに書き込み 
+            # ----------------------------------------
+            service = get_calendar_service()
+            if service is None:
+                return 
+
+            try:
+                # 日時オブジェクトの生成
+                start_dt_obj = datetime.combine(start_date, datetime.strptime(start_time_str, '%H:%M').time())
+                end_dt_obj = datetime.combine(end_date, datetime.strptime(end_time_str, '%H:%M').time())
+                
+                if end_dt_obj <= start_dt_obj:
+                    st.error("終了日時は開始日時より後に設定してください。")
+                    return
+
+                # 予定のボディを作成 (ISO 8601形式が必要)
+                event_body = {
+                    'summary': default_title,
+                    'description': detail,
+                    'start': {
+                        'dateTime': start_dt_obj.isoformat(),
+                        'timeZone': 'Asia/Tokyo',
+                    },
+                    'end': {
+                        'dateTime': end_dt_obj.isoformat(),
+                        'timeZone': 'Asia/Tokyo',
+                    },
+                }
+
+                # API経由で予定を挿入
+                event = service.events().insert(calendarId=CALENDAR_ID, body=event_body).execute()
+                
+                st.session_state['user_name'] = user_name 
+                st.success(f"予定 `{default_title}` がカレンダーに自動登録されました！")
+                st.experimental_rerun()
                     
-                    if end_dt_obj <= start_dt_obj:
-                        st.error("終了日時は開始日時より後に設定してください。")
-                    else:
-                        # --- Google Calendar URL生成ロジック ---
-                        
-                        # タイムスタンプを Google Calendar 形式にフォーマット (YYYYMMDDTHHMMSS)
-                        cal_start = start_dt_obj.strftime('%Y%m%dT%H%M%S')
-                        cal_end = end_dt_obj.strftime('%Y%m%dT%H%M%S')
-                        dates_param = f"{cal_start}/{cal_end}"
-                        
-                        # タイトルと詳細を URL エンコード
-                        title_encoded = url_quote(default_title)
-                        detail_encoded = url_quote(detail)
-                        
-                        # Google Calendar 予定作成 URL
-                        calendar_url = (
-                            "https://calendar.google.com/calendar/r/eventedit?"
-                            f"text={title_encoded}"
-                            f"&dates={dates_param}"
-                            f"&details={detail_encoded}"
-                            f"&src={calendar_id}" # 登録先カレンダーIDをプリセット
-                            "&sf=true&output=xml"
-                        )
-                        
-                        # 成功メッセージとリンクをセッションに格納し、リロード
-                        st.session_state['user_name'] = user_name 
-                        st.session_state['calendar_success_msg'] = (
-                            f"予定 `{default_title}` の詳細を生成しました。下のボタンをクリックしてカレンダーで登録を完了してください。"
-                            f'<br><br><a href="{calendar_url}" target="_blank">'
-                            f'<button style="width:100%; height:40px; background-color:#F4B400; color:white; border:none; border-radius:5px; cursor:pointer;">'
-                            f'✅ カレンダーを開いて最終登録する (新しいタブで開きます)</button></a>'
-                        )
-                        st.experimental_rerun()
-                        
-                except ValueError:
-                    st.error("時刻のフォーマットが無効です。「HH:MM」の形式で入力してください。")
-                except Exception as e:
-                    st.error(f"予定の処理中にエラーが発生しました: {e}")
+            except ValueError:
+                st.error("時刻のフォーマットが無効です。「HH:MM」の形式で入力してください。")
+            except HttpError as e:
+                # 権限不足または不正なIDの場合のエラー捕捉
+                st.error(f"カレンダー登録に失敗しました。詳細: {e.content.decode()}")
+            except Exception as e:
+                st.error(f"予定の登録中に予期せぬエラーが発生しました: {e}")
 # ---------------------------
 # --- メインルーティング ---
 # ---------------------------
@@ -1375,6 +1379,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
