@@ -196,7 +196,6 @@ gc, storage_client = initialize_google_services()
 # ---------------------------
 @st.cache_data(ttl=600, show_spinner="スプレッドシートからデータを読み込み中...")
 def get_sheet_as_df(spreadsheet_name, sheet_name):
-    """指定スプレッドシートシートを DataFrame で返す。失敗時は空のDFを返す"""
     global gc
     try:
         if isinstance(gc, DummyGSClient):
@@ -1366,6 +1365,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
