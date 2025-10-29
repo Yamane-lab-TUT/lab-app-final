@@ -1155,6 +1155,11 @@ def page_pl_analysis():
 # --------------------------
 # --- 予約・カレンダーページ（外部サイト連携版） ---
 # --------------------------
+# app (2).py の page_calendar 関数をこのコードで完全に置き換え
+
+# --------------------------
+# --- 予約・カレンダーページ（条件付き入力欄表示修正版） ---
+# --------------------------
 def page_calendar():
     st.header("🗓️ スケジュール・装置予約")
     
@@ -1185,9 +1190,20 @@ def page_calendar():
 
     st.markdown("---")
     
-    # ------------------------------------
-    # --- 2. 新規予定登録フォーム ---
-    # ------------------------------------
+    # --- 2. Googleカレンダーの埋め込み ---
+    st.subheader("予約カレンダー（Googleカレンダー）")
+
+    calendar_id = "yamane.lab.6747@gmail.com" 
+    calendar_html = f"""
+    <iframe src="https://calendar.google.com/calendar/embed?height=600&wkst=1&bgcolor=%23ffffff&ctz=Asia%2FTokyo&src={calendar_id}&color=%237986CB&showTitle=0&showPrint=0&showCalendars=0&showTz=0" style="border-width:0" width="100%" height="600" frameborder="0" scrolling="no"></iframe>
+    """
+    
+    st.markdown(calendar_html, unsafe_allow_html=True)
+    
+    st.caption("このカレンダーの予約状況を確認し、以下のフォームから予定を登録してください。")
+    st.markdown("---") 
+
+    # --- 3. 新規予定登録フォーム ---
     st.subheader("🗓️ 新規予定の登録")
     
     with st.form(key='schedule_form'):
@@ -1200,8 +1216,12 @@ def page_calendar():
         category = col_cat.selectbox("作業/装置カテゴリ", CATEGORY_OPTIONS)
         
         custom_category = ""
+        # ⚠️ 修正点: 「その他入力」が選択された場合のみ、隣のカラムにテキストボックスを表示
         if category == "その他入力":
             custom_category = col_other.text_input("カテゴリを直接入力", placeholder="例: 学会発表準備")
+        else:
+            # 「その他入力」が選ばれていない場合、スペースを確保するためにもう一方のカラムは空にしておく
+            col_other.empty() 
             
         # タイトルの生成
         final_category = custom_category if category == "その他入力" else category
@@ -1261,8 +1281,6 @@ def page_calendar():
                 except Exception as e:
                     st.error(f"予定の登録中にエラーが発生しました: {e}")
 
-    st.markdown("---")
-
     # ------------------------------------
     # --- 3. Googleカレンダーの埋め込み ---
     # ------------------------------------
@@ -1320,6 +1338,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
