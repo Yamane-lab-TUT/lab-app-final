@@ -106,6 +106,20 @@ TROUBLE_COL_FILENAME = 'ファイル名'
 TROUBLE_COL_FILE_URL = 'ファイルURL'
 TROUBLE_COL_TITLE = '件名/タイトル'
 
+# --- 研究室スケジュールデータ（新しいシートが必要） ---
+SHEET_SCHEDULE_DATA = "Schedule"
+SCH_COL_TIMESTAMP = "登録日時"
+SCH_COL_TITLE = "タイトル"
+SCH_COL_DETAIL = "詳細"
+SCH_COL_START_DATETIME = "開始日時"
+SCH_COL_END_DATETIME = "終了日時"
+SCH_COL_USER = "登録者"
+
+# --- 予約/作業のカテゴリ（タイトル生成用） ---
+CATEGORY_OPTIONS = [
+    "D1エピ", "D2エピ", "MBEメンテ", "XRD", "PL", "AFM", "フォトリソ", "アニール", "蒸着", "その他入力"
+]
+
 # ---------------------------
 # --- Google Service Stubs ---
 # ---------------------------
@@ -1306,6 +1320,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
