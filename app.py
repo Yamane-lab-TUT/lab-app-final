@@ -365,47 +365,45 @@ def display_attached_files(row_dict, col_url_key, col_filename_key=None):
             st.info("添付ファイルはありません。")
             return
 
+        # URLとファイル名を取得するロジックはそのまま
         urls = []; filenames = []
-        # URLの解析
         try:
             urls = json.loads(row_dict[col_url_key])
-            if not isinstance(urls, list): 
-                urls = [urls]
+            if not isinstance(urls, list): urls = [urls]
         except Exception:
-            # JSONでない場合は生の文字列を要素としてリスト化
-            raw_url = str(row_dict[col_url_key]).strip().strip('"')
-            urls = [raw_url] if raw_url else []
+            urls = [s.strip().strip('"') for s in str(row_dict[col_url_key]).split(',') if s.strip()]
 
-        # ファイル名の解析
         if col_filename_key and col_filename_key in row_dict and row_dict[col_filename_key]:
             try:
                 filenames = json.loads(row_dict[col_filename_key])
                 if not isinstance(filenames, list): filenames = [filenames]
             except Exception:
-                raw_filename = str(row_dict[col_filename_key]).strip().strip('"')
-                filenames = [raw_filename] if raw_filename else []
+                filenames = []
         
-        # 表示ロジック
+        # 表示
         for idx, url in enumerate(urls):
             if not url:
                 continue
             
             label = filenames[idx] if idx < len(filenames) else os.path.basename(url)
-            lower = url.lower()
             
-            is_image = lower.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp'))
+            # --- 修正点: URLからクエリパラメータ（?以降）を削除して拡張子を判定 ---
+            # "?" 以降を削除
+            url_no_query = url.split('?')[0] 
+            lower = url_no_query.lower()
+            
+            is_image = lower.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp')) 
             is_pdf = lower.endswith('.pdf')
+            # -------------------------------------------------------------------
             
-            st.markdown(f"---") # 各ファイルの区切り線
+            st.markdown(f"##### {label}")
 
             if is_image:
                 # 画像は st.image でページ内に埋め込み表示
-                st.markdown(f"**写真・画像:** {label}")
+                st.markdown(f"**写真・画像:** {label}") # ファイル名を画像の上に表示
                 try:
-                    # use_column_width=True で自動リサイズ
-                    st.image(url, caption=label, use_column_width=True) 
+                    st.image(url, caption=label, use_column_width=True) # URLはクエリ付きのままでOK
                 except Exception:
-                    # 失敗時はリンクと警告を表示
                     st.warning(f"画像 '{label}' の表示に失敗しました。")
                     st.markdown(f"🔗 [別タブで開く/ダウンロード]({url})")
             
@@ -413,12 +411,12 @@ def display_attached_files(row_dict, col_url_key, col_filename_key=None):
                 # PDFはリンクとして提供し、HTML埋め込みは回避
                 st.markdown(f"**PDFファイル:** {label}")
                 st.markdown(f"🔗 [別タブでPDFファイルを開く]({url})")
-
+            
             else:
                 # その他のファイルはリンクとして提供
                 st.markdown(f"**添付ファイル:** {label}")
                 st.markdown(f"🔗 [ファイルを開く/ダウンロード]({url})")
-
+                
     except Exception as e:
         st.error(f"添付ファイルの表示に失敗しました: {e}")
 
@@ -1183,6 +1181,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
