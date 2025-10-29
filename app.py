@@ -363,6 +363,7 @@ def display_attached_files(row_dict, col_url_key, col_filename_key=None):
     col_url_key: key name of the URL field (保存時は JSON array を期待)
     col_filename_key: key name of filenames (optional, JSON array)
     """
+    # ... (URLとファイル名の解析ロジックは省略) ...
     try:
         if col_url_key not in row_dict or not row_dict[col_url_key]:
             st.info("添付ファイルはありません。")
@@ -395,36 +396,39 @@ def display_attached_files(row_dict, col_url_key, col_filename_key=None):
             is_image = lower.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp')) 
             is_pdf = lower.endswith('.pdf')
             
-            # 各ファイルの区切り
-            st.markdown("---") 
+            st.markdown("---") # 各ファイルの区切り
 
             if is_image:
                 st.markdown("**写真・画像:**")
-                try:
-                    # 修正点: height=500 で高さを制限（縦幅調整）し、横幅は自動調整（縦横比維持）
-                    # width=None, use_container_width=False とすることで、heightが優先される
-                    st.image(
-                        url, 
-                        caption="", 
-                        height=500, # 縦幅を最大500pxに制限
-                        use_container_width=False # widthを明示的に指定しない
-                    )
-                    # 画像の下にダウンロードリンク
-                    st.markdown(f"🔗 [ファイルを開く/ダウンロード]({url})") 
-                except Exception:
-                    # 画像表示失敗時は警告とダウンロードリンクを表示
-                    st.warning("⚠️ 画像の表示に失敗しました。")
-                    st.markdown(f"🔗 [ファイルを開く/ダウンロード]({url})")
+                # ----------------------------------------------------
+                # ⚠️ 修正点: st.image を避け、HTMLで強制的に表示し、CSSで縦幅を制限
+                # max-height: 500px; は縦幅を最大500pxに制限し、width: auto; で縦横比を維持します。
+                # Streamlitのセキュリティを無効化する unsafe_allow_html=True が必要です。
+                img_html = f"""
+                <img 
+                    src="{url}" 
+                    alt="Image file" 
+                    style="max-height: 500px; width: auto; display: block; margin-left: auto; margin-right: auto;"
+                >
+                """
+                st.markdown(img_html, unsafe_allow_html=True)
+                # ----------------------------------------------------
+
+                # 画像の下にダウンロードリンク（リンクの表示は最小限に）
+                st.markdown(f"🔗 [ファイルを開く/ダウンロード]({url})") 
             
             elif is_pdf:
-                st.info(f"PDFファイルは、このページでは直接表示できません。")
+                st.info("PDFファイルは、このページでは直接表示できません。")
                 st.markdown(f"🔗 [ファイルを開く/ダウンロード]({url})")
 
             else:
                 st.markdown(f"🔗 [ファイルを開く/ダウンロード]({url})")
 
     except Exception as e:
-        st.error(f"添付ファイルの表示に失敗しました: {e}")
+        # 例外発生時も、st.markdownのHTMLが原因でないかチェックしやすいようにする
+        st.error(f"添付ファイルの表示処理中にエラーが発生しました: {e}")
+        st.warning("⚠️ 画像の表示に失敗しました。")
+        st.markdown(f"🔗 [元のリンクを開く]({url})")
 
 def page_epi_note_list():
     detail_cols = [EPI_COL_TIMESTAMP, EPI_COL_CATEGORY, EPI_COL_NOTE_TYPE, EPI_COL_MEMO, EPI_COL_FILENAME]
@@ -1186,6 +1190,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
