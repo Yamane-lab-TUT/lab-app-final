@@ -1190,6 +1190,12 @@ def get_calendar_service():
 # --- 予約・カレンダーページ（最終調整版） ---
 # --------------------------
 def page_calendar():
+# --- 0. セッションステートに保存されたメッセージを表示 ---
+    if 'calendar_success_message' in st.session_state:
+        st.success(st.session_state['calendar_success_message'])
+        # メッセージを一度表示したら消去
+        del st.session_state['calendar_success_message']
+        
     st.header("🗓️ スケジュール・装置予約")
     
     # --- 1. 外部予約サイトへのリンク ---
@@ -1333,13 +1339,13 @@ def page_calendar():
                 # API経由で予定を挿入
                 event = service.events().insert(calendarId=CALENDAR_ID, body=event_body).execute()
                 
+                # 成功メッセージとユーザー名をセッションに保存
                 st.session_state['user_name'] = user_name 
-                
-                # 🌟 登録成功メッセージと更新 🌟
-                st.success(f"✅ 予定 `{final_title}` がカレンダーに自動登録されました！")
+                st.session_state['calendar_success_message'] = f"✅ 予定 `{final_title}` がカレンダーに自動登録されました！"
                 
                 # ページ全体を再実行し、カレンダー埋め込みを再ロードして更新
-                st.rerun() 
+                # st.rerun() は st.success の前に実行されるため、メッセージが残るようになります
+                st.rerun()
                     
             except ValueError:
                 st.error("時刻のフォーマットが無効です。「HH:MM」の形式で入力してください。")
@@ -1390,3 +1396,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
