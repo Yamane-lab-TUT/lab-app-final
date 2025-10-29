@@ -1169,7 +1169,7 @@ def get_calendar_service():
     try:
         # Streamlit Secretsの 'gcp_service_account' キーから JSON 情報を取得
         # ※このキーには、GCSとカレンダー両方で使用するJSON鍵情報を登録します
-        json_info = st.secrets["gcp_service_account"]
+        json_info = st.secrets["gcs_credentials"]
         
         # サービスアカウント認証情報を作成
         creds = service_account.Credentials.from_service_account_info(
@@ -1372,6 +1372,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
