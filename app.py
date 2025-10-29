@@ -360,12 +360,14 @@ def display_attached_files(row_dict, col_url_key, col_filename_key=None):
     row_dict: pandas Series / dict representing a row
     col_url_key: key name of the URL field (保存時は JSON array を期待)
     col_filename_key: key name of filenames (optional, JSON array)
+    表示は st.image(..., use_container_width=True) で行う（自動リサイズ）
     """
     try:
         if col_url_key not in row_dict or not row_dict[col_url_key]:
             st.info("添付ファイルはありません。")
             return
 
+        # URLとファイル名を取得する既存のロジックはそのまま
         urls = []; filenames = []
         try:
             urls = json.loads(row_dict[col_url_key])
@@ -384,46 +386,30 @@ def display_attached_files(row_dict, col_url_key, col_filename_key=None):
         for idx, url in enumerate(urls):
             if not url:
                 continue
-            
             label = filenames[idx] if idx < len(filenames) else os.path.basename(url)
+            lower = url.lower()
+            is_image = lower.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp'))
+            is_pdf = lower.endswith('.pdf') # PDF判定を追加
             
-            # URLからクエリパラメータ（?以降）を削除して拡張子を判定
-            url_no_query = url.split('?')[0] 
-            lower = url_no_query.lower()
-            
-            is_image = lower.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp')) 
-            is_pdf = lower.endswith('.pdf')
-            
-            st.markdown("---") # 各ファイルの区切り
+            st.markdown(f"##### {label}") # ファイル名をタイトルとして表示
 
             if is_image:
-                st.markdown("**写真・画像:**")
-                
-                # HTMLで強制的に表示し、CSSで縦幅を制限 (max-height: 500px)
-                # unsafe_allow_html=True を必ず含めることで、HTML文字列ではなく画像としてレンダリングする
-                img_html = f"""
-                <img 
-                    src="{url}" 
-                    alt="Image file" 
-                    style="max-height: 500px; width: auto; display: block; margin-left: auto; margin-right: auto;"
-                >
-                """
-                st.markdown(img_html, unsafe_allow_html=True) 
-
-                # 画像の下にダウンロードリンク（リンクの表示は最小限に）
-                st.markdown(f"🔗 [ファイルを開く/ダウンロード]({url})") 
-            
+                # 画像は st.image でページ内に埋め込み表示
+                # 注意: この時点では use_column_width=True なので非推奨警告が出ます
+                st.image(url, caption="画像ファイル", use_column_width=True)
             elif is_pdf:
-                st.info("PDFファイルは、このページでは直接表示できません。")
-                st.markdown(f"🔗 [ファイルを開く/ダウンロード]({url})")
-
+                # PDFは iframe を使って同じページ内に埋め込み表示 (元のロジック)
+                st.markdown(f"""
+                    <iframe src="{url}" width="100%" height="600" style="border: none;"></iframe>
+                    <p style='font-size: small;'><a href="{url}" target="_blank">別タブで開く</a></p>
+                """, unsafe_allow_html=True)
             else:
-                st.markdown(f"🔗 [ファイルを開く/ダウンロード]({url})")
+                # その他のファイルはリンクとして提供
+                st.warning(f"このファイルはブラウザでの直接表示をサポートしていません。")
+                st.markdown(f"🔗 [{label} をダウンロード]({url})")
 
     except Exception as e:
-        # メインの try-except ブロック
-        st.error(f"添付ファイルの表示処理中にエラーが発生しました: {e}")
-        st.warning("処理が中断されました。")
+        st.error(f"添付ファイルの表示に失敗しました: {e}")
 
 def page_epi_note_list():
     detail_cols = [EPI_COL_TIMESTAMP, EPI_COL_CATEGORY, EPI_COL_NOTE_TYPE, EPI_COL_MEMO, EPI_COL_FILENAME]
@@ -1185,6 +1171,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
