@@ -1163,55 +1163,6 @@ def page_pl_analysis():
 # --- 予約・カレンダーページ（条件付き入力欄表示修正版） ---
 # --------------------------
 # Google Calendar API接続ユーティリティ
-def get_calendar_service():
-    """Streamlit Secretsから認証情報を取得し、Google Calendar APIのサービスオブジェクトを構築する"""
-    
-    # ⚠️ ここを gcs_credentials に変更します ⚠️
-    SECRETS_KEY_NAME = "gcs_credentials"
-    
-    try:
-        # 1. Secrets から鍵情報を取得
-        secret_content = st.secrets[SECRETS_KEY_NAME] 
-
-        # 2. 取得した内容を、JSONとしてパースする
-        if isinstance(secret_content, str):
-            # SecretsがJSON文字列として登録されている場合
-            json_info = json.loads(secret_content)
-        elif isinstance(secret_content, dict):
-            # SecretsがTOML形式（辞書型）として正しく登録されている場合
-            json_info = secret_content
-        else:
-            st.error(f"エラー: Secretsのキー '{SECRETS_KEY_NAME}' のデータ形式が不正です。")
-            return None
-
-        # サービスアカウント認証情報を作成
-        creds = service_account.Credentials.from_service_account_info(
-            json_info, scopes=SCOPES
-        )
-        
-        # Calendar APIクライアントを作成
-        service = build('calendar', 'v3', credentials=creds)
-        return service
-
-    except KeyError:
-        # 鍵が見つからない場合のエラーメッセージもキー名に合わせて修正
-        st.error(f"重大エラー: Streamlit Secretsにキー '{SECRETS_KEY_NAME}' が見つかりません。")
-        st.caption(f"Secrets設定画面で、キー名が [{SECRETS_KEY_NAME}] であることを確認し、アプリを再起動してください。")
-        return None
-    except json.JSONDecodeError:
-        st.error(f"エラー: Secretsのキー '{SECRETS_KEY_NAME}' に登録された鍵情報が不正なJSON形式です。")
-        st.caption("登録内容に余計な文字や引用符が含まれていないか確認してください。")
-        return None
-    except Exception as e:
-        # ... (その他のエラー処理)
-        if isinstance(e, HttpError):
-            st.error(f"カレンダーAPIエラー: 権限を確認してください。詳細: {e.content.decode()}")
-        else:
-            st.error(f"Google Calendar APIの初期化に失敗しました: {e}")
-        return None
-# --------------------------
-# --- 予約・カレンダーページ（Googleカレンダー自動登録版） ---
-# --------------------------
 def page_calendar():
     st.header("🗓️ スケジュール・装置予約")
     
@@ -1221,6 +1172,12 @@ def page_calendar():
     except NameError:
         # 暫定的な定義
         CATEGORY_OPTIONS = ["D1エピ", "D2エピ", "MBEメンテ", "XRD", "PL", "AFM", "フォトリソ", "アニール", "蒸着", "その他入力"]
+
+    # CALENDAR_ID が定義されている前提
+    try:
+        CALENDAR_ID
+    except NameError:
+        CALENDAR_ID = "yamane.lab.6747@gmail.com"
 
     # --- 1. 外部予約サイトへのリンク（省略） ---
     st.subheader("外部予約サイト")
@@ -1245,13 +1202,6 @@ def page_calendar():
     
     # --- 2. Googleカレンダーの埋め込み（省略） ---
     st.subheader("予約カレンダー（Googleカレンダー）")
-    # CALENDAR_ID が定義されている前提
-    try:
-        CALENDAR_ID
-    except NameError:
-        # 暫定的な定義（エラー防止）
-        CALENDAR_ID = "yamane.lab.6747@gmail.com"
-
     calendar_html = f"""
     <iframe src="https://calendar.google.com/calendar/embed?height=600&wkst=1&bgcolor=%23ffffff&ctz=Asia%2FTokyo&src={CALENDAR_ID}&color=%237986CB&showTitle=0&showPrint=0&showCalendars=0&showTz=0" style="border-width:0" width="100%" height="600" frameborder="0" scrolling="no"></iframe>
     """
@@ -1260,47 +1210,38 @@ def page_calendar():
     st.markdown("---") 
 
     # -----------------------------------------------------
-    # --- 3. 予約登録の制御部分（フォーム外で即時応答を実現） ---
+    # --- 3. 新規予定登録フォーム (全要素を枠内に統合) ---
     # -----------------------------------------------------
     st.subheader("🗓️ 新規予定の登録")
     
     initial_user_name = st.session_state.get('user_name', '')
     
-    # --- フォームの外に配置する要素: カテゴリ選択とカスタム入力欄 ---
-    col_cat, col_other = st.columns([1, 2])
-    
-    with col_cat:
-        category = st.selectbox("作業/装置カテゴリ", CATEGORY_OPTIONS, key="category_select_outside")
-        
-    custom_category = ""
-    with col_other:
-        if category == "その他入力":
-            custom_category = st.text_input(
-                "カスタムカテゴリを直接入力", 
-                placeholder="例: 学会発表準備", 
-                key="custom_category_input_cal_outside"
-            ) 
-    
-    # 最終カテゴリ名を決定 (submitボタンが押される前に確定)
-    final_category = custom_category if category == "その他入力" else category
-    
-    # 💡 フォームの外では、タイトルは仮表示に留める（デザイン調整のためこの行を削除またはコメントアウト）
-    # st.markdown(f"**💡 予定のタイトル（登録者名入力後確定）:** `{initial_user_name} ({final_category})`")
-    st.markdown("---") 
-
-    # -----------------------------------------------------
-    # --- 4. フォーム本体 ---
-    # -----------------------------------------------------
     with st.form(key='schedule_form'):
         
         # 1. 登録者名
         user_name = st.text_input("登録者名 / グループ名", value=initial_user_name)
         
-        # 2. 選択されたカテゴリの表示をフォーム内に移動
-        # 💡 これが「枠からはみ出さない」ための修正です。
+        # 2. カテゴリ選択とカスタム入力欄をフォーム内に移動
+        col_cat, col_other = st.columns([1, 2])
+        
+        with col_cat:
+            # 💡 フォーム内に配置
+            category = st.selectbox("作業/装置カテゴリ", CATEGORY_OPTIONS, key="category_select_inside")
+            
+        custom_category = ""
+        with col_other:
+            # 💡 フォーム内に配置
+            if category == "その他入力":
+                custom_category = st.text_input(
+                    "カスタムカテゴリを直接入力", 
+                    placeholder="例: 学会発表準備", 
+                    key="custom_category_input_cal_inside"
+                ) 
+        
+        # 3. 最終カテゴリ名とタイトルを計算し表示
+        final_category = custom_category if category == "その他入力" else category
         st.markdown(f"**📚 選択されたカテゴリ:** `{final_category}`") 
         
-        # 3. 予定タイトルを計算し表示
         final_title_preview = f"{user_name} ({final_category})" if user_name and final_category else ""
         st.markdown(f"**💡 予定のタイトル:** `{final_title_preview}`")
 
@@ -1323,7 +1264,7 @@ def page_calendar():
         submit_button = st.form_submit_button(label='⬆️ Googleカレンダーに自動登録')
 
         if submit_button:
-            # フォーム内の user_name と、フォーム外の final_category を使用
+            # フォーム内の user_name と、フォーム内の final_category を使用
             if not user_name or not final_category:
                 st.error("「登録者名」と「作業カテゴリ」は必須です。")
                 return 
@@ -1339,15 +1280,9 @@ def page_calendar():
                 return 
 
             try:
-                # 日時オブジェクトの生成
-                # (既存のコードを省略。ここで必要なライブラリや関数が定義されていることを前提とする)
-                # datetime.combine, datetime.strptime, HttpError, service_account.Credentials, build, SCOPES...
-                
-                # ダミーコードを削除し、実際の処理を記述してください
+                # 必要なライブラリや関数が定義されていることを前提とする
                 from datetime import datetime
-                from googleapiclient.discovery import build
                 from googleapiclient.errors import HttpError
-                # get_calendar_service が定義されている前提
                 
                 start_dt_obj = datetime.combine(start_date, datetime.strptime(start_time_str, '%H:%M').time())
                 end_dt_obj = datetime.combine(end_date, datetime.strptime(end_time_str, '%H:%M').time())
@@ -1376,6 +1311,7 @@ def page_calendar():
                 st.session_state['user_name'] = user_name 
                 st.success(f"予定 `{final_title}` がカレンダーに自動登録されました！")
                 
+                # st.rerun() で画面を即座に更新
                 st.rerun() 
                     
             except ValueError:
@@ -1427,6 +1363,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
