@@ -2,6 +2,7 @@
 """
 bennriyasann3_fixed_v2_part1.py
 Yamane Lab Convenience Tool - 修正版パート1（共通ユーティリティ・認証・データ読み込み等）
+"""
 
 
 import streamlit as st
@@ -249,7 +250,8 @@ def _load_two_column_data_core(uploaded_bytes, column_names):
 # ---------------------------
 @st.cache_data(show_spinner="IVデータを解析中...", max_entries=128)
 def load_data_file(uploaded_bytes, uploaded_filename):
-    """IVファイルを読み込み Axis_X と filename 列を返す（uploaded_bytes: bytes）"""
+    # ⚠️ 修正: 全角括弧を半角括弧に修正 (SyntaxErrorを解消)
+    """IVファイルを読み込み Axis_X と filename 列を返す (uploaded_bytes: bytes)"""
     return _load_two_column_data_core(uploaded_bytes, ['Axis_X', uploaded_filename])
 
 @st.cache_data(show_spinner="PLデータを解析中...", max_entries=128)
@@ -1157,14 +1159,40 @@ def page_pl_analysis():
     except Exception as e:
         st.error(f"Excel出力に失敗しました: {e}")
 
+# ---------------------------
+# --- Google Calendar API接続ユーティリティを追加 ---
+# ---------------------------
+@st.cache_resource(ttl=3600)
+def get_calendar_service():
+    """Google Calendar API サービスオブジェクトを取得する (page_calendar()で使用)"""
+    if "gcs_credentials" not in st.secrets:
+        st.error("Google Calendar API認証情報 (`gcs_credentials`) が Streamlit secrets に設定されていません。")
+        return None
+    try:
+        raw = st.secrets["gcs_credentials"]
+        # クレンジング
+        cleaned = raw.strip().replace('\t', '').replace('\r', '').replace('\n', '')
+        info = json.loads(cleaned)
+
+        # サービスアカウント認証情報を使用してCredentialsオブジェクトを作成
+        creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+        # Calendar API サービスオブジェクトを構築
+        service = build('calendar', 'v3', credentials=creds)
+        return service
+    except json.JSONDecodeError:
+        st.error("カレンダー認証情報JSONの解析に失敗しました。")
+        return None
+    except Exception as e:
+        st.error(f"Google Calendar Serviceの初期化に失敗しました: {e}")
+        return None
+        
 # --------------------------
 # --- 予約・カレンダーページ（条件付き入力欄表示修正版） ---
 # --------------------------
-# Google Calendar API接続ユーティリティ
 def page_calendar():
     st.header("🗓️ スケジュール・装置予約")
     
-    # --- 1. 外部予約サイトへのリンク（省略解除） ---
+    # --- 1. 外部予約サイトへのリンク ---
     st.subheader("外部予約サイト")
     
     col_evers, col_rac = st.columns(2)
@@ -1191,7 +1219,7 @@ def page_calendar():
 
     st.markdown("---")
     
-    # --- 2. Googleカレンダーの埋め込み（省略解除） ---
+    # --- 2. Googleカレンダーの埋め込み ---
     st.subheader("予約カレンダー（Googleカレンダー）")
 
     calendar_html = f"""
@@ -1210,10 +1238,10 @@ def page_calendar():
     
     initial_user_name = st.session_state.get('user_name', '')
     
-    # 1. 登録者名をフォームの外に配置
+    # 1. 登録者名をフォームの外に配置 (即時表示のため)
     user_name = st.text_input("登録者名 / グループ名", value=initial_user_name, key="user_name_outside")
     
-    # 2. カテゴリ選択とカスタム入力欄をフォームの外に配置
+    # 2. カテゴリ選択とカスタム入力欄をフォームの外に配置 (即時表示のため)
     col_cat, col_other = st.columns([1, 2])
     
     with col_cat:
@@ -1276,7 +1304,6 @@ def page_calendar():
             # ----------------------------------------
             # API経由で直接カレンダーに書き込み 
             # ----------------------------------------
-            # get_calendar_service() はファイル内のどこかで定義されている必要があります
             service = get_calendar_service() 
             if service is None:
                 return 
@@ -1360,46 +1387,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
