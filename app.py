@@ -355,11 +355,6 @@ def upload_file_to_gcs(storage_client_obj, file_obj, folder_name):
 # --- 添付ファイル表示ユーティリティ（自動リサイズ） ---
 # ---------------------------
 
-# app (2).py の 381行目付近
-
-# ---------------------------
-# --- 添付ファイル表示ユーティリティ（最終修正版：高さ制限なし、安定性最優先） ---
-# ---------------------------
 def display_attached_files(row_dict, col_url_key, col_filename_key=None):
     """
     row_dict: pandas Series / dict representing a row
@@ -405,11 +400,11 @@ def display_attached_files(row_dict, col_url_key, col_filename_key=None):
             if is_image:
                 st.markdown("**写真・画像:**")
                 try:
-                    # use_container_width=True で横幅に合わせる（警告解消とリサイズ）
+                    # ⚠️ 修正点: width=800 で横幅を800ピクセルに制限
                     st.image(
                         url, 
                         caption="", 
-                        use_container_width=True 
+                        width=800 # 横幅を800ピクセルに固定し、高さは縦横比に合わせて自動調整
                     )
                 except Exception:
                     # 画像表示失敗時は警告とダウンロードリンクを表示
@@ -1190,6 +1185,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
