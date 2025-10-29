@@ -214,11 +214,6 @@ def get_sheet_as_df(spreadsheet_name, sheet_name):
 # --- データ読み込みコア ---
 # ---------------------------
 def _load_two_column_data_core(uploaded_bytes, column_names):
-    """
-    バイト列から 2列データを抽出して DataFrame を返す。
-    - uploaded_bytes: bytes
-    - column_names: list[str] 例 ['Axis_X', 'Current']
-    """
     try:
         text = uploaded_bytes.decode('utf-8', errors='ignore').splitlines()
         # コメント/空行を除く
@@ -1365,6 +1360,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
