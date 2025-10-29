@@ -250,7 +250,7 @@ def _load_two_column_data_core(uploaded_bytes, column_names):
 # ---------------------------
 @st.cache_data(show_spinner="IVデータを解析中...", max_entries=128)
 def load_data_file(uploaded_bytes, uploaded_filename):
-    # ⚠️ 修正: 全角括弧を半角括弧に修正 (SyntaxErrorを解消)
+    # 修正済み: 全角括弧を半角括弧に修正
     """IVファイルを読み込み Axis_X と filename 列を返す (uploaded_bytes: bytes)"""
     return _load_two_column_data_core(uploaded_bytes, ['Axis_X', uploaded_filename])
 
@@ -424,7 +424,7 @@ def display_attached_files(row_dict, col_url_key, col_filename_key=None):
             if is_image:
                 st.markdown("**写真・画像:**")
                 try:
-                    # ⚠️ 修正点: width=800 で横幅を800ピクセルに制限
+                    # 修正済み: width=800 で横幅を800ピクセルに制限
                     st.image(
                         url, 
                         caption="", 
@@ -1187,7 +1187,7 @@ def get_calendar_service():
         return None
         
 # --------------------------
-# --- 予約・カレンダーページ（条件付き入力欄表示修正版） ---
+# --- 予約・カレンダーページ（最終調整版） ---
 # --------------------------
 def page_calendar():
     st.header("🗓️ スケジュール・装置予約")
@@ -1292,7 +1292,7 @@ def page_calendar():
         
         submit_button = st.form_submit_button(label='⬆️ Googleカレンダーに自動登録')
 
-if submit_button:
+        if submit_button:
             # フォーム外の user_name と final_category を使用
             if not user_name or not final_category:
                 st.error("「登録者名」と「作業カテゴリ」は必須です。")
@@ -1309,7 +1309,6 @@ if submit_button:
                 return 
 
             try:
-                # ... (日時オブジェクトの生成、エラーチェックのコードは省略なしでそのまま) ...
                 start_dt_obj = datetime.combine(start_date, datetime.strptime(start_time_str, '%H:%M').time())
                 end_dt_obj = datetime.combine(end_date, datetime.strptime(end_time_str, '%H:%M').time())
                 
@@ -1334,15 +1333,13 @@ if submit_button:
                 # API経由で予定を挿入
                 event = service.events().insert(calendarId=CALENDAR_ID, body=event_body).execute()
                 
-                # 成功メッセージを表示し、ユーザー名をセッションに保存
                 st.session_state['user_name'] = user_name 
                 
-                # 🌟 ここが修正/最適化された成功表示と更新部分です 🌟
+                # 🌟 登録成功メッセージと更新 🌟
                 st.success(f"✅ 予定 `{final_title}` がカレンダーに自動登録されました！")
                 
                 # ページ全体を再実行し、カレンダー埋め込みを再ロードして更新
                 st.rerun() 
-                # -------------------------------------------------------------
                     
             except ValueError:
                 st.error("時刻のフォーマットが無効です。「HH:MM」の形式で入力してください。")
@@ -1393,4 +1390,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
