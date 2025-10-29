@@ -1142,11 +1142,9 @@ def page_pl_analysis():
 # --- 予約・カレンダーページ（外部サイト連携版） ---
 # --------------------------
 def page_calendar():
-    st.header("🗓️ 装置予約・スケジュール")
+    st.header("🗓️ スケジュール・装置予約")
     
-    # ------------------------------------
     # --- 1. 外部予約サイトへのリンク ---
-    # ------------------------------------
     st.subheader("外部予約サイト")
     
     col_evers, col_rac = st.columns(2)
@@ -1172,13 +1170,91 @@ def page_calendar():
     col_rac.caption("（共用施設利用登録）")
 
     st.markdown("---")
+    
+    # ------------------------------------
+    # --- 2. 新規予定登録フォーム ---
+    # ------------------------------------
+    st.subheader("🗓️ 新規予定の登録")
+    
+    with st.form(key='schedule_form'):
+        
+        # 登録者名
+        user_name = st.text_input("登録者名 / グループ名", value=st.session_state.get('user_name', ''))
+        
+        # カテゴリ選択とタイトル自動生成
+        col_cat, col_other = st.columns([1, 2])
+        category = col_cat.selectbox("作業/装置カテゴリ", CATEGORY_OPTIONS)
+        
+        custom_category = ""
+        if category == "その他入力":
+            custom_category = col_other.text_input("カテゴリを直接入力", placeholder="例: 学会発表準備")
+            
+        # タイトルの生成
+        final_category = custom_category if category == "その他入力" else category
+        default_title = f"{user_name} ({final_category})" if user_name and final_category else ""
+        
+        st.markdown(f"**💡 予定のタイトル:** `{default_title}`")
+        
+        st.markdown("---")
+        
+        # 開始日時と終了日時
+        st.markdown("##### 予定日時")
+        
+        cols_start_date, cols_start_time = st.columns(2)
+        start_date = cols_start_date.date_input("開始日", value=date.today())
+        start_time_str = cols_start_time.text_input("開始時刻 (例: 09:00)", value="09:00")
+
+        cols_end_date, cols_end_time = st.columns(2)
+        end_date = cols_end_date.date_input("終了日", value=date.today())
+        end_time_str = cols_end_time.text_input("終了時刻 (例: 11:00)", value="11:00")
+        
+        # 詳細（メモ）
+        detail = st.text_area("詳細（予定の内容）", height=100)
+        
+        submit_button = st.form_submit_button(label='⬆️ スケジュールに登録')
+
+        if submit_button:
+            if not user_name or not final_category:
+                st.error("「登録者名」と「作業カテゴリ」は必須です。")
+            else:
+                try:
+                    # 日時オブジェクトの生成
+                    start_dt_obj = datetime.combine(start_date, datetime.strptime(start_time_str, '%H:%M').time())
+                    end_dt_obj = datetime.combine(end_date, datetime.strptime(end_time_str, '%H:%M').time())
+                    
+                    if end_dt_obj <= start_dt_obj:
+                        st.error("終了日時は開始日時より後に設定してください。")
+                    else:
+                        new_data = {
+                            SCH_COL_TIMESTAMP: datetime.now().strftime('%Y/%m/%d %H:%M:%S'),
+                            SCH_COL_TITLE: default_title,
+                            SCH_COL_DETAIL: detail,
+                            SCH_COL_START_DATETIME: start_dt_obj.strftime('%Y/%m/%d %H:%M'),
+                            SCH_COL_END_DATETIME: end_dt_obj.strftime('%Y/%m/%d %H:%M'),
+                            SCH_COL_USER: user_name,
+                        }
+                        
+                        # データ登録
+                        append_data_to_sheet(SHEET_SCHEDULE_DATA, new_data)
+                        
+                        # 登録者名をセッションに保存
+                        st.session_state['user_name'] = user_name 
+                        st.success(f"予定 `{default_title}` を登録しました！")
+                        st.experimental_rerun()
+                        
+                except ValueError:
+                    st.error("時刻のフォーマットが無効です。「HH:MM」の形式で入力してください。")
+                except Exception as e:
+                    st.error(f"予定の登録中にエラーが発生しました: {e}")
+
+    st.markdown("---")
 
     # ------------------------------------
-    # --- 2. Googleカレンダーの埋め込み ---
+    # --- 3. Googleカレンダーの埋め込み ---
     # ------------------------------------
     st.subheader("予約カレンダー（Googleカレンダー）")
 
-    # ⚠️ 修正点: YOUR_CALENDAR_ID を提供されたIDに置き換えました
+    # GoogleカレンダーIDをそのまま使用
     calendar_id = "yamane.lab.6747@gmail.com" 
     calendar_html = f"""
     <iframe src="https://calendar.google.com/calendar/embed?height=600&wkst=1&bgcolor=%23ffffff&ctz=Asia%2FTokyo&src={calendar_id}&color=%237986CB&showTitle=0&showPrint=0&showCalendars=0&showTz=0" style="border-width:0" width="100%" height="600" frameborder="0" scrolling="no"></iframe>
@@ -1186,7 +1262,7 @@ def page_calendar():
     
     st.markdown(calendar_html, unsafe_allow_html=True)
     
-    st.caption("埋め込みカレンダーは、Googleカレンダーの設定で「一般公開」または「組織内で公開」されている必要があります。")
+    st.caption("カレンダーへの反映にはGoogle Apps Scriptなどを使った連携が必要です。このフォームのデータは別シートに保存されます。")
 # ---------------------------
 # --- メインルーティング ---
 # ---------------------------
@@ -1230,6 +1306,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
