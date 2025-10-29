@@ -3,9 +3,6 @@
 bennriyasann3_fixed_v2_part1.py
 Yamane Lab Convenience Tool - 修正版パート1（共通ユーティリティ・認証・データ読み込み等）
 
-このファイルはアプリ本体を二分割して提供するための「前半」です。
-後半（ページ定義・メインルーティング）は続けて出力します。
-"""
 
 import streamlit as st
 import gspread
@@ -26,6 +23,8 @@ import matplotlib.font_manager as fm
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from datetime import date, datetime
+import streamlit as st
 
 # Optional: google cloud client import
 try:
@@ -119,6 +118,12 @@ SCH_COL_DETAIL = "詳細"
 SCH_COL_START_DATETIME = "開始日時"
 SCH_COL_END_DATETIME = "終了日時"
 SCH_COL_USER = "登録者"
+
+try:
+    CALENDAR_ID
+except NameError:
+    # 暫定的な定義（エラー防止）
+    CALENDAR_ID = "yamane.lab.6747@gmail.com"
 
 # --- 予約/作業のカテゴリ（タイトル生成用） ---
 CATEGORY_OPTIONS = [
@@ -1166,27 +1171,45 @@ def page_pl_analysis():
 def page_calendar():
     st.header("🗓️ スケジュール・装置予約")
     
-    # カテゴリの定義（ファイル上部の定数として定義されていることを前提とします）
-    try:
-        CATEGORY_OPTIONS
-    except NameError:
-        # 暫定的な定義
-        CATEGORY_OPTIONS = ["D1エピ", "D2エピ", "MBEメンテ", "XRD", "PL", "AFM", "フォトリソ", "アニール", "蒸着", "その他入力"]
+    # --- 1. 外部予約サイトへのリンク（省略解除） ---
+    st.subheader("外部予約サイト")
+    
+    col_evers, col_rac = st.columns(2)
+    
+    # Evers 予約サイト
+    evers_url = "https://www.eiiris.tut.ac.jp/evers/Web/dashboard.php"
+    col_evers.markdown(
+        f'<a href="{evers_url}" target="_blank">'
+        f'<button style="width:100%; height:40px; background-color:#4CAF50; color:white; border:none; border-radius:5px; cursor:pointer;">'
+        f'Evers 予約サイトへアクセス</button></a>',
+        unsafe_allow_html=True
+    )
+    col_evers.caption("（学内共用装置予約システム）")
 
-    # CALENDAR_ID が定義されている前提
-    try:
-        CALENDAR_ID
-    except NameError:
-        CALENDAR_ID = "yamane.lab.6747@gmail.com"
+    # 教育研究基盤センター 予約ポータル
+    rac_url = "https://tech.rac.tut.ac.jp/regist/potal_0.php"
+    col_rac.markdown(
+        f'<a href="{rac_url}" target="_blank">'
+        f'<button style="width:100%; height:40px; background-color:#2196F3; color:white; border:none; border-radius:5px; cursor:pointer;">'
+        f'教育研究基盤センター ポータルへ</button></a>',
+        unsafe_allow_html=True
+    )
+    col_rac.caption("（共用施設利用登録）")
 
-    # --- 1. 外部予約サイトへのリンク（省略） ---
-    # ... (外部サイトへのリンクコードは省略)
     st.markdown("---")
     
-    # --- 2. Googleカレンダーの埋め込み（省略） ---
-    # ... (カレンダー埋め込みコードは省略)
-    st.markdown("---") 
+    # --- 2. Googleカレンダーの埋め込み（省略解除） ---
+    st.subheader("予約カレンダー（Googleカレンダー）")
 
+    calendar_html = f"""
+    <iframe src="https://calendar.google.com/calendar/embed?height=600&wkst=1&bgcolor=%23ffffff&ctz=Asia%2FTokyo&src={CALENDAR_ID}&color=%237986CB&showTitle=0&showPrint=0&showCalendars=0&showTz=0" style="border-width:0" width="100%" height="600" frameborder="0" scrolling="no"></iframe>
+    """
+    
+    st.markdown(calendar_html, unsafe_allow_html=True)
+    
+    st.caption("カレンダーの予約状況を確認し、以下のフォームから予定を登録してください。")
+    st.markdown("---") 
+    
     # ------------------------------------------------------------------
     # --- 3. 予約登録の制御部分（フォーム外: 即時応答が必要な要素） ---
     # ------------------------------------------------------------------
@@ -1260,14 +1283,12 @@ def page_calendar():
             # ----------------------------------------
             # API経由で直接カレンダーに書き込み 
             # ----------------------------------------
-            service = get_calendar_service()
+            # get_calendar_service() はファイル内のどこかで定義されている必要があります
+            service = get_calendar_service() 
             if service is None:
                 return 
 
             try:
-                from datetime import datetime
-                from googleapiclient.errors import HttpError
-                
                 start_dt_obj = datetime.combine(start_date, datetime.strptime(start_time_str, '%H:%M').time())
                 end_dt_obj = datetime.combine(end_date, datetime.strptime(end_time_str, '%H:%M').time())
                 
@@ -1346,6 +1367,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
