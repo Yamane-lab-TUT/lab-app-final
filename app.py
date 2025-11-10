@@ -1386,9 +1386,9 @@ def main():
         page_epi_note()
     elif menu_selection == "メンテノート":
         page_mainte_note()
-    elif menu_selection == "⚡ IVデータ解析":
+    elif menu_selection == "IVデータ解析":
         page_iv_analysis()
-    elif menu_selection == "🔬 PLデータ解析":
+    elif menu_selection == "PLデータ解析":
         page_pl_analysis()
     elif menu_selection == "議事録":
         page_meeting_note()
@@ -1407,6 +1407,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
