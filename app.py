@@ -726,8 +726,9 @@ def page_epi_note_recording():
             worksheet.append_row(row_data)
             st.success("✅ エピノートをアップロードしました！")
             
-            if 'st.cache_data' in st.__dict__:
-                st.cache_data.clear()
+            # 【修正】データ読み込み関数（get_data_from_gspread）のキャッシュをクリア
+            # ※ get_data_from_gspread がファイル上部でインポートされている必要があります
+            get_data_from_gspread.clear() 
             st.rerun()
             
         except Exception as e:
@@ -829,8 +830,8 @@ def page_mainte_recording():
             worksheet.append_row(row_data)
             st.success("✅ メンテノートをアップロードしました！")
             
-            if 'st.cache_data' in st.__dict__:
-                st.cache_data.clear()
+# 【修正】データ読み込み関数（get_data_from_gspread）のキャッシュをクリア
+            get_data_from_gspread.clear() 
             st.rerun()
             
         except Exception as e:
@@ -1607,6 +1608,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
