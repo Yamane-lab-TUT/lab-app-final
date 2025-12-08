@@ -313,7 +313,7 @@ def load_pl_data(uploaded_file):
         return None
 
 # ---------------------------
-# --- NEW: General Graph Plotting Page ---
+# --- NEW: General Graph Plotting Page (修正版) ---
 # ---------------------------
 def page_graph_plotting():
     st.header("📈 高機能グラフ描画")
@@ -330,27 +330,40 @@ def page_graph_plotting():
     # 読み込み処理
     data_list = []
     for f in files:
+        df = None
         try:
-            # 汎用的な読み込み: 区切り文字自動判定の試み
-            content = f.getvalue().decode('utf-8', errors='ignore')
-            # コメント行削除などの前処理は既存load_data_fileと同様
-            lines = [l.strip() for l in content.splitlines() if l.strip() and not l.strip().startswith(('#','!','/'))]
-            if not lines: continue
+            # 読み込み試行1: 一般的なCSVとして読み込み（ヘッダーあり、カンマ区切り）
+            # StreamlitのUploadedFileはseek(0)が必要な場合がある
+            f.seek(0)
+            df = pd.read_csv(f)
             
-            # 数値データの開始行を探す
-            start_idx = 0
-            if not lines[0][0].isdigit() and not lines[0].startswith('-'):
-                 start_idx = 1
+            # もし1列しか認識されなかった場合、または区切り文字が違う可能性がある場合
+            if df.shape[1] <= 1:
+                # 読み込み試行2: タブ区切りまたはスペース区切りを試す
+                f.seek(0)
+                content = f.getvalue().decode('utf-8', errors='ignore')
+                # コメント行を除去
+                lines = [l.strip() for l in content.splitlines() if l.strip() and not l.strip().startswith(('#','!','/'))]
+                
+                if lines:
+                    # ヘッダーがあるか判定 (1行目が数字で始まらないならヘッダーとみなす)
+                    header_opt = 'infer'
+                    if lines[0][0].isdigit() or lines[0].startswith('-'):
+                        header_opt = None
+                    
+                    df = pd.read_csv(io.StringIO("\n".join(lines)), sep=r'[\t, ]+', engine='python', header=header_opt)
+
+        except Exception as e:
+            st.error(f"{f.name} の読み込みに失敗しました: {e}")
+            continue
+
+        if df is not None and not df.empty:
+            # 列名が数字の連番になっている場合（header=Noneのとき）、わかりやすくリネーム
+            if isinstance(df.columns[0], int):
+                cols = [f"Col {i+1}" for i in range(df.shape[1])]
+                df.columns = cols
             
-            df = pd.read_csv(io.StringIO("\n".join(lines[start_idx:])), sep=r'[\t, ]+', engine='python', header=None)
-            df = df.apply(pd.to_numeric, errors='coerce')
-            
-            # 列名付与
-            cols = [f"Col {i+1}" for i in range(df.shape[1])]
-            df.columns = cols
             data_list.append({"name": f.name, "df": df})
-        except Exception:
-            st.error(f"{f.name} の読み込みに失敗しました。")
 
     if not data_list: return
 
@@ -362,17 +375,17 @@ def page_graph_plotting():
 
     with col_settings:
         with st.expander("📊 キャンバスとフォント (全体)", expanded=True):
-            fig_w = st.number_input("幅 (inch)", 6.0, 20.0, 8.0, step=0.5)
-            fig_h = st.number_input("高さ (inch)", 4.0, 20.0, 6.0, step=0.5)
-            font_size = st.number_input("基本フォントサイズ", 8, 30, 14)
+            fig_w = st.number_input("幅 (inch)", 1.0, 50.0, 8.0, step=0.5)
+            fig_h = st.number_input("高さ (inch)", 1.0, 50.0, 6.0, step=0.5)
+            font_size = st.number_input("基本フォントサイズ", 6, 50, 14)
             font_family = st.selectbox("フォント", ["Arial", "Times New Roman", "Helvetica", "Hiragino Maru Gothic Pro", "Meiryo"])
             plt.rcParams['font.family'] = font_family
             plt.rcParams['font.size'] = font_size
-            dpi_val = st.number_input("解像度 (DPI)", 72, 600, 150)
+            dpi_val = st.number_input("解像度 (DPI)", 72, 1200, 150)
 
         with st.expander("📐 軸 (Axes) と グリッド"):
             st.markdown("**X軸設定**")
-            x_label = st.text_input("X軸ラベル", "Voltage (V)")
+            x_label = st.text_input("X軸ラベル", "X Axis")
             x_log = st.checkbox("X軸 対数表示", False)
             x_inv = st.checkbox("X軸 反転", False)
             x_min = st.number_input("X最小 (Auto=0)", value=0.0)
@@ -380,7 +393,7 @@ def page_graph_plotting():
             
             st.markdown("---")
             st.markdown("**Y軸設定**")
-            y_label = st.text_input("Y軸ラベル", "Current (A)")
+            y_label = st.text_input("Y軸ラベル", "Y Axis")
             y_log = st.checkbox("Y軸 対数表示", False)
             y_inv = st.checkbox("Y軸 反転", False)
             y_min = st.number_input("Y最小 (Auto=0)", value=0.0)
@@ -401,8 +414,12 @@ def page_graph_plotting():
                 # 列選択
                 cols = d['df'].columns.tolist()
                 c1, c2, c3 = st.columns(3)
-                x_col = c1.selectbox(f"X列 ({i})", cols, index=0, key=f"x_{i}")
-                y_col = c2.selectbox(f"Y列 ({i})", cols, index=1 if len(cols)>1 else 0, key=f"y_{i}")
+                # デフォルトで1列目をX、2列目をYにする（存在すれば）
+                default_x = 0
+                default_y = 1 if len(cols) > 1 else 0
+                
+                x_col = c1.selectbox(f"X列 ({i})", cols, index=default_x, key=f"x_{i}")
+                y_col = c2.selectbox(f"Y列 ({i})", cols, index=default_y, key=f"y_{i}")
                 
                 # エラーバー設定
                 use_error = c3.checkbox(f"エラーバー ({i})", False, key=f"use_err_{i}")
@@ -412,10 +429,11 @@ def page_graph_plotting():
                 
                 # スタイル
                 cc1, cc2, cc3 = st.columns(3)
-                color = cc1.color_picker(f"色 ({i})", value=["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728"][i%4], key=f"col_{i}")
+                color = cc1.color_picker(f"色 ({i})", value=["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"][i%5], key=f"col_{i}")
                 marker = cc2.selectbox(f"マーカー ({i})", ["None", "o", "s", "^", "D", "x"], index=0, key=f"mark_{i}")
                 linestyle = cc3.selectbox(f"線種 ({i})", ["-", "--", "-.", ":", "None"], index=0, key=f"line_{i}")
                 
+                # 凡例ラベル: デフォルトはファイル名だが、列名も含めるか選択可能にすると便利
                 label_txt = st.text_input(f"凡例ラベル ({i})", d['name'], key=f"leg_{i}")
                 
                 plot_configs.append({
@@ -515,7 +533,6 @@ def page_graph_plotting():
         buf_svg = BytesIO()
         fig.savefig(buf_svg, format="svg")
         st.download_button("ベクター画像 (SVG) を保存", buf_svg.getvalue(), "graph.svg", "image/svg")
-
 
 # ---------------------------
 # --- Components ---
@@ -977,3 +994,4 @@ if __name__ == "__main__":
     except Exception:
         pass
     main()
+
