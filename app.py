@@ -356,12 +356,12 @@ def combine_dataframes(dataframes, filenames, num_points=500):
     return combined_df
 
 # ---------------------------
-# --- 添付ファイル表示ユーティリティ (修正版) ---
+# --- 添付ファイル表示ユーティリティ (最終々修正版) ---
 # ---------------------------
 def display_attached_files(row_dict, col_url_key, col_filename_key):
     """
     指定された行データから添付ファイル（URLとファイル名）を抽出し、リンクとして表示する。
-    古いJSON形式でないURL、新しいJSON形式のURLの両方に対応。
+    JSON形式（エスケープ対応）と古い単一URL形式の両方に対応。
     """
     import json
     import re
@@ -370,32 +370,48 @@ def display_attached_files(row_dict, col_url_key, col_filename_key):
     filenames = []
     
     # 1. URLデータを取得
-    raw_urls = row_dict.get(col_url_key, '[]')
+    raw_urls = row_dict.get(col_url_key, '')
+    raw_filenames = row_dict.get(col_filename_key, '')
     
-    # 2. JSON形式のデコードを試みる（新しいデータまたは古いJSON形式データに対応）
+    # 2. JSONデコードを試みる（新しいデータに対応）
     try:
-        # JSONとして読み込みを試みる
+        # JSONデコードを試みる。不要なエスケープを削除せず、gspreadが出力した状態のままデコードに挑戦する
         parsed_urls = json.loads(raw_urls)
-        # JSONリストがネストされている場合や、単純なリストでない場合を考慮
-        urls = [url for url in parsed_urls if isinstance(url, str) and url.startswith('http')]
+        
+        # 読み込んだデータがリストであれば、有効なURLのみを抽出
+        if isinstance(parsed_urls, list):
+            # リスト内の要素がさらにJSON文字列である可能性に対応
+            urls = []
+            for item in parsed_urls:
+                if isinstance(item, str) and item.startswith('http'):
+                    urls.append(item)
+                else:
+                    try:
+                        # 二重エスケープされた文字列を再度デコードする（例: "\"http...\""）
+                        inner_item = json.loads(item)
+                        if isinstance(inner_item, str) and inner_item.startswith('http'):
+                            urls.append(inner_item)
+                    except:
+                        pass
         
     except (json.JSONDecodeError, AttributeError, TypeError):
-        # JSONデコードに失敗した場合（古いデータや単一のURL文字列の場合）
+        # 3. JSONデコードに失敗した場合（古いデータや単一のURL文字列の場合）
         
-        # 3. 古いデータ形式や単一URLとして処理（文字列からURLを抽出）
+        # 文字列から http:// または https:// で始まる最初の要素をURLとして抽出
         url_match = re.search(r'https?://[^\s,"]+', raw_urls)
         if url_match:
             urls = [url_match.group(0)]
         else:
             urls = []
-    
+
     # 4. ファイル名の取得
-    raw_filenames = row_dict.get(col_filename_key, '[]')
     try:
-        # ファイル名はJSONとして読み込む（新しいデータ形式）
+        # ファイル名をJSONとして読み込む
         filenames = json.loads(raw_filenames)
+        if not isinstance(filenames, list):
+            filenames = [filenames] if isinstance(filenames, str) else []
     except (json.JSONDecodeError, AttributeError, TypeError):
-        # ファイル名がJSONでない場合（古いデータ形式）は、URLと対になるように空にするか、メモから抽出を試みる
+        # JSONでない場合は、URLの数に合わせて仮のファイル名を設定
         filenames = [f"添付ファイル {i+1}" for i in range(len(urls))]
 
 
@@ -403,16 +419,13 @@ def display_attached_files(row_dict, col_url_key, col_filename_key):
     if urls:
         st.markdown("##### 📎 添付ファイル")
         
-        # ファイル名リストとURLリストの長さを調整
+        # リストの長さを調整
         if len(filenames) < len(urls):
-            # ファイル名がURLより少ない場合は、足りない分を補完
             filenames += [f"ファイル {i+1}" for i in range(len(filenames), len(urls))]
         elif len(filenames) > len(urls):
-            # URLがファイル名より少ない場合は、ファイル名をURLの長さに合わせる
             filenames = filenames[:len(urls)]
             
         for url, filename in zip(urls, filenames):
-            # 認証されたURL（非公開ファイルの場合）または公開URLを表示
             st.markdown(f"[{filename}]({url})")
     else:
         st.markdown("添付ファイルはありません。")
@@ -1573,6 +1586,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
