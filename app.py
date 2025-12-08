@@ -967,59 +967,69 @@ def page_contact_form():
 # --- IVデータ解析ページ ---
 # ---------------------------
 def page_iv_analysis():
-    st.header("⚡ IVデータ解析")
-    uploaded_files = st.file_uploader("IV測定データファイル (.txt) をアップロード", type=['txt'], accept_multiple_files=True)
-    if not uploaded_files:
-        st.info("ファイルをアップロードしてください。")
-        return
+    # ... (初期設定、アップロード処理などは省略)
 
-    valid_dataframes = []
-    filenames = []
-    st.subheader("ステップ1: ファイル読み込みと解析")
+    # データの読み込み
+    data_frames = {}
+    file_names = []
     for uploaded_file in uploaded_files:
-        # load_data_file は bytes を受け取る (part1 で定義)
-        df = load_data_file(uploaded_file.getvalue(), uploaded_file.name)
-        if df is not None and not df.empty:
-            valid_dataframes.append(df)
-            filenames.append(uploaded_file.name)
+        df = load_data_file(uploaded_file, uploaded_file.name)
+        if df is not None:
+            data_frames[uploaded_file.name] = df
+            file_names.append(uploaded_file.name)
 
-    if not valid_dataframes:
-        st.warning("有効なデータファイルが見つかりませんでした。")
-        return
+    if data_frames:
+        st.subheader("IV測定データ 解析")
+        
+        # --- データプロット (往路/復路) ---
+        # 結合処理は行わず、個々のデータフレームをプロット
+        
+        fig, ax = plt.subplots()
+        
+        # X軸とY軸の選択（元のコードに基づき、1列目と2列目）
+        x_col = data_frames[file_names[0]].columns[0]
+        y_col = data_frames[file_names[0]].columns[1]
+        
+        for name, df in data_frames.items():
+            # **【核心の修正】往路/復路に分割してプロット**
+            
+            # データの分割点を特定: X軸（1列目）の最大値のインデックス
+            # 通常、IV測定は 負のV → 正のV → 負のV と動くため、Xが最大になる点が折り返し点
+            
+            # X軸データ
+            x_data = df.iloc[:, 0] 
+            
+            # X軸の最大値を持つインデックス
+            max_index = x_data.idxmax()
 
-    st.success(f"{len(valid_dataframes)} 個の有効なファイルを読み込みました。")
+            # 往路 (Forward: データの最初から最大値まで)
+            df_forward = df.iloc[:max_index + 1]
+            ax.plot(df_forward.iloc[:, 0], df_forward.iloc[:, 1], 
+                    label=f"{name} (Forward)", linestyle='-', marker='o', markersize=3)
 
-    st.subheader("ステップ2: 結合 (補間)")
-    combined_df = combine_dataframes(valid_dataframes, filenames)
-    if combined_df is None:
-        st.error("結合に失敗しました。データの形式を確認してください。")
-        return
+            # 復路 (Reverse: 最大値の次から最後まで)
+            df_reverse = df.iloc[max_index + 1:]
+            if not df_reverse.empty:
+                ax.plot(df_reverse.iloc[:, 0], df_reverse.iloc[:, 1], 
+                        label=f"{name} (Reverse)", linestyle='--', marker='x', markersize=3)
+        
+        # グラフの装飾
+        ax.set_xlabel(x_col)
+        ax.set_ylabel(y_col)
+        ax.set_title("IV Characteristic (Forward/Reverse)")
+        ax.legend()
+        ax.grid(True)
+        st.pyplot(fig)
+        
+        # ... (データフレーム表示などは削除)
+        # 結合データはプロットしないため、以下の部分は削除またはコメントアウト
+        # if combined_df is not None:
+        #     st.subheader("結合データ")
+        #     st.dataframe(combined_df)
+    else:
+        st.info("ファイルをアップロードしてください。")
 
-    st.subheader("ステップ3: グラフ表示")
-    fig, ax = plt.subplots(figsize=(12, 7))
-    for filename in filenames:
-        ax.plot(combined_df['X_Axis'], combined_df[filename], label=filename)
-    ax.set_xlabel("電圧 (V)")
-    ax.set_ylabel("電流 (A)")
-    ax.grid(True)
-    ax.legend(title="ファイル名", loc='best')
-    ax.set_title("IV特性比較")
-    st.pyplot(fig, use_container_width=True)
-
-    st.subheader("ステップ4: 結合データ")
-    combined_df_display = combined_df.rename(columns={'X_Axis': 'Voltage_V'})
-    st.dataframe(combined_df_display.head(50), use_container_width=True)
-
-    # Excelダウンロード
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        combined_df_display.to_excel(writer, sheet_name='Combined IV Data', index=False)
-    st.download_button(
-        label="📈 結合Excelデータとしてダウンロード",
-        data=output.getvalue(),
-        file_name=f"iv_analysis_combined_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+# 補足: 往路/復路の分割ロジックは、X軸が単調増加し、最大値で折り返すという一般的なIV測定のシーケンスに基づいています。
 
 # ---------------------------
 # --- PLデータ解析ページ ---
@@ -1407,6 +1417,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
