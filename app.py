@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-bennriyasann3_complete_full_v1.py
-Yamane Lab Convenience Tool - 完全統合版
+bennriyasann3_final_integrated_v2.py
+Yamane Lab Convenience Tool - 認証ロジック統合版
 """
 
 import streamlit as st
@@ -24,13 +24,13 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-# GCS Library
+# GCS Library (存在しない場合も考慮)
 try:
     from google.cloud import storage
 except ImportError:
     storage = None
 
-# --- Matplotlib 日本語フォント設定 (可能な限り適用) ---
+# --- Matplotlib 日本語フォント設定 ---
 try:
     plt.rcParams['font.family'] = 'sans-serif'
     plt.rcParams['font.sans-serif'] = [
@@ -42,11 +42,11 @@ except Exception:
     pass
 
 # ---------------------------
-# --- 1. 定数・設定 ---
+# --- 定数（グローバル変数） ---
 # ---------------------------
 SPREADSHEET_NAME = "エピノート (2).xlsx" 
 
-# 各シート名 (CSVファイル名から特定)
+# 各シート名
 SHEET_EPI_DATA = "エピノート_データ"   
 SHEET_MAINTE_DATA = "メンテノート_データ" 
 SHEET_SCHEDULE_DATA = "スケジュール" 
@@ -59,56 +59,91 @@ SHEET_MEETING_DATA = "議事録_データ"
 # GCSバケット名
 CLOUD_STORAGE_BUCKET_NAME = "yamane-lab-app-files"
 
-# カレンダーID (適宜変更してください)
-CALENDAR_ID = "primary" 
+# ---------------------------
+# --- Google Calendar API連携用定数 ---
+# ---------------------------
+# 鍵ファイルは st.secrets から読み込むため、ファイル名は不要です
+SCOPES = ['https://www.googleapis.com/auth/calendar']
+CALENDAR_ID = "yamane.lab.6747@gmail.com" # ターゲットカレンダーID
 
 # ---------------------------
-# --- 2. 認証処理 ---
+# --- Google Service Stubs ---
 # ---------------------------
-gc = None
+class DummyGSClient:
+    """認証失敗時用ダミー gspread クライアント"""
+    def open(self, name): return self
+    def worksheet(self, name): return self
+    def get_all_records(self): return []
+    def get_all_values(self): return []
+    def append_row(self, values): pass
+
+class DummyStorageClient:
+    """認証失敗時用ダミー GCS クライアント"""
+    def bucket(self, name): return self
+    def blob(self, name): return self
+    def upload_from_file(self, file_obj, content_type): pass
+    def list_blobs(self, **kwargs): return []
+    # upload_from_string もダミーに追加
+    def upload_from_string(self, data, content_type=None): pass
+
+# グローバル初期値（認証されていない状態でもUIは起動する）
+gc = DummyGSClient()
+storage_client = DummyStorageClient()
+
+# ---------------------------
+# --- Google 認証初期化 ---
+# ---------------------------
+@st.cache_resource(ttl=3600)
+def initialize_google_services():
+    global storage
+    if storage is None:
+        # google.cloud.storage が import できない環境
+        st.sidebar.warning("⚠️ `google-cloud-storage` が利用できません。ファイルアップロード機能は制限されます。")
+        return DummyGSClient(), DummyStorageClient()
+
+    if "gcs_credentials" not in st.secrets:
+        st.sidebar.info("Streamlit secrets に `gcs_credentials` を設定してください（オフラインでも一部機能は動きます）。")
+        return DummyGSClient(), DummyStorageClient()
+
+    try:
+        raw = st.secrets["gcs_credentials"]
+        # クレンジング
+        cleaned = raw.strip().replace('\t', '').replace('\r', '').replace('\n', '')
+        info = json.loads(cleaned)
+        gc_real = gspread.service_account_from_dict(info)
+        storage_real = storage.Client.from_service_account_info(info)
+        st.sidebar.success("✅ Googleサービス認証 成功")
+        return gc_real, storage_real
+    except json.JSONDecodeError as e:
+        st.sidebar.error(f"認証情報のJSONが不正です: {e}")
+        return DummyGSClient(), DummyStorageClient()
+    except Exception as e:
+        st.sidebar.error(f"Googleサービスの初期化に失敗しました: {e}")
+        return DummyGSClient(), DummyStorageClient()
+
+# --- 認証の実行 ---
+gc, storage_client = initialize_google_services()
+
+# --- Google Calendar サービス初期化 (追加) ---
 gcal_service = None
-storage_client = None
-
 try:
-    if "gcp_service_account" in st.secrets:
-        creds_dict = dict(st.secrets["gcp_service_account"])
-        
-        # Gspread認証
-        try:
-            gc = gspread.service_account_from_dict(creds_dict)
-        except Exception as e:
-            st.error(f"Google Sheets認証エラー: {e}")
-
-        # Calendar認証
-        try:
-            gcal_creds = service_account.Credentials.from_service_account_info(
-                creds_dict, scopes=['https://www.googleapis.com/auth/calendar']
-            )
-            gcal_service = build('calendar', 'v3', credentials=gcal_creds)
-        except Exception as e:
-            # カレンダーが使えなくても他は動かす
-            pass
-
-        # GCS認証
-        if storage:
-            try:
-                storage_client = storage.Client()
-            except Exception as e:
-                pass
-    else:
-        st.warning("secrets.toml に 'gcp_service_account' が見つかりません。")
-
-except Exception as e:
-    st.error(f"認証初期化エラー: {e}")
+    if "gcs_credentials" in st.secrets:
+        raw = st.secrets["gcs_credentials"]
+        cleaned = raw.strip().replace('\t', '').replace('\r', '').replace('\n', '')
+        info = json.loads(cleaned)
+        gcal_creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+        gcal_service = build('calendar', 'v3', credentials=gcal_creds)
+except Exception:
+    pass # カレンダーエラーは無視してアプリを起動
 
 # ---------------------------
-# --- 3. ユーティリティ関数 ---
+# --- ユーティリティ関数 ---
 # ---------------------------
 
 @st.cache_data(ttl=600)
 def get_data_from_gspread(sheet_name):
     """スプレッドシートからデータを取得しDataFrame化"""
-    if gc is None:
+    if isinstance(gc, DummyGSClient):
         return pd.DataFrame()
     try:
         worksheet = gc.open(SPREADSHEET_NAME).worksheet(sheet_name)
@@ -126,21 +161,22 @@ def get_data_from_gspread(sheet_name):
 
 def upload_file_to_gcs(client_obj, file_obj):
     """ファイルをGCSルートに保存し、公開URLを返す"""
-    if client_obj is None or storage is None:
+    if isinstance(client_obj, DummyStorageClient) or client_obj is None:
         return None, None
     try:
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         safe_name = file_obj.name.replace(' ', '_').replace('/', '_')
-        gcs_filename = f"{timestamp}_{safe_name}" # フォルダなし（ルート保存）
+        gcs_filename = f"{timestamp}_{safe_name}"
 
         bucket = client_obj.bucket(CLOUD_STORAGE_BUCKET_NAME)
         blob = bucket.blob(gcs_filename)
+        
+        # Streamlit UploadedFile は getvalue()
         blob.upload_from_string(
             file_obj.getvalue(),
             content_type=file_obj.type if hasattr(file_obj, 'type') else 'application/octet-stream'
         )
         
-        # 公開URL生成 (署名付きが必要な場合はここを変更)
         public_url = f"https://storage.googleapis.com/{CLOUD_STORAGE_BUCKET_NAME}/{url_quote(gcs_filename)}"
         return file_obj.name, public_url
     except Exception as e:
@@ -160,9 +196,7 @@ def handle_file_uploads(uploaded_files):
     return json.dumps(f_list), json.dumps(u_list)
 
 def display_attached_files(row_dict, col_url_key, col_filename_key):
-    """
-    添付ファイル表示: JSON二重エスケープ対応版
-    """
+    """添付ファイル表示: JSON二重エスケープ対応版"""
     urls = []
     filenames = []
     
@@ -171,14 +205,12 @@ def display_attached_files(row_dict, col_url_key, col_filename_key):
 
     # --- URLデコード ---
     try:
-        # まず単純にJSONデコード
         parsed = json.loads(raw_urls)
         if isinstance(parsed, list):
             for item in parsed:
                 if isinstance(item, str) and item.startswith('http'):
                     urls.append(item)
                 else:
-                    # 中身がさらにJSON文字列の場合の救済
                     try:
                         inner = json.loads(item)
                         if isinstance(inner, str) and inner.startswith('http'):
@@ -187,7 +219,6 @@ def display_attached_files(row_dict, col_url_key, col_filename_key):
         elif isinstance(parsed, str) and parsed.startswith('http'):
              urls.append(parsed)
     except:
-        # JSON失敗時は正規表現で抽出
         m = re.search(r'https?://[^\s,"]+', str(raw_urls))
         if m: urls = [m.group(0)]
 
@@ -199,13 +230,11 @@ def display_attached_files(row_dict, col_url_key, col_filename_key):
         elif isinstance(parsed_fn, str):
             filenames = [parsed_fn]
     except:
-        # 失敗時は仮の名前
         filenames = [f"添付ファイル {i+1}" for i in range(len(urls))]
 
     # --- 表示 ---
     if urls:
         st.markdown("##### 📎 添付ファイル")
-        # 長さ合わせ
         if len(filenames) < len(urls):
             filenames += [f"File {i+1}" for i in range(len(filenames), len(urls))]
         
@@ -216,6 +245,10 @@ def display_attached_files(row_dict, col_url_key, col_filename_key):
 
 def save_row_to_sheet(sheet_name, row_data):
     """行データをシートに追加し、キャッシュクリアしてリラン"""
+    if isinstance(gc, DummyGSClient):
+        st.error("認証されていないため保存できません。")
+        return
+
     try:
         ws = gc.open(SPREADSHEET_NAME).worksheet(sheet_name)
         ws.append_row(row_data)
@@ -240,7 +273,6 @@ def page_epi_note():
             cat = st.selectbox("カテゴリ", ["D1", "D2", "その他"])
             memo = st.text_area("詳細メモ", height=150)
             files = st.file_uploader("添付ファイル", accept_multiple_files=True)
-            # Layout調整用Expander
             with st.expander("データのインポート"): pass
             submit = st.form_submit_button("記録を保存")
         
@@ -261,7 +293,6 @@ def page_epi_note():
                 df = df.sort_values('タイムスタンプ', ascending=False)
             st.dataframe(df, use_container_width=True)
             
-            # 詳細表示
             ts_col = 'タイムスタンプ'
             if ts_col in df.columns:
                 sel = st.selectbox("詳細表示を選択", df[ts_col].unique(), key="epi_sel")
@@ -390,11 +421,8 @@ def page_iv_analysis():
         
         for f in uploaded_files:
             try:
-                # 汎用的な読み込み
                 content = f.getvalue().decode('utf-8', errors='ignore')
-                # コメント行スキップ & データの抽出
                 lines = [l for l in content.splitlines() if l.strip() and not l.strip().startswith(('#', '!', '/'))]
-                # 最初の有効な行がヘッダーの可能性があるので、数値変換できる行を探す
                 data_start_idx = 0
                 for i, line in enumerate(lines):
                     try:
@@ -410,20 +438,16 @@ def page_iv_analysis():
                 df = pd.read_csv(io.StringIO("\n".join(data_lines)), sep=r'\s+|,|\t', engine='python', header=None)
                 if df.shape[1] < 2: continue
                 
-                # 数値化
                 x = pd.to_numeric(df.iloc[:, 0], errors='coerce')
                 y = pd.to_numeric(df.iloc[:, 1], errors='coerce')
                 df_clean = pd.DataFrame({'x': x, 'y': y}).dropna()
                 
                 if df_clean.empty: continue
                 
-                # 往路復路の分割 (最大電圧で折り返しと仮定)
                 max_idx = df_clean['x'].idxmax()
                 
-                # 往路
                 ax.plot(df_clean.iloc[:max_idx+1]['x'], df_clean.iloc[:max_idx+1]['y'], 
                         label=f"{f.name} (往)", marker='.', markersize=2)
-                # 復路
                 if max_idx < len(df_clean) - 1:
                     ax.plot(df_clean.iloc[max_idx+1:]['x'], df_clean.iloc[max_idx+1:]['y'], 
                             label=f"{f.name} (復)", linestyle='--', alpha=0.7)
@@ -456,13 +480,11 @@ def page_pl_analysis():
             try:
                 content = f.getvalue().decode('utf-8', errors='ignore')
                 lines = [l for l in content.splitlines() if l.strip() and not l.strip().startswith(('#', '!', '/'))]
-                
-                # データ開始行探索
                 data_lines = []
                 for line in lines:
                     try:
                         parts = re.split(r'\s+|,|\t', line.strip())
-                        float(parts[1]) # 2列目が強度と仮定
+                        float(parts[1]) 
                         data_lines.append(line)
                     except: continue
 
@@ -471,10 +493,7 @@ def page_pl_analysis():
                 
                 y_data = pd.to_numeric(df.iloc[:, 1], errors='coerce').fillna(0)
                 pixels = np.arange(len(y_data))
-                
-                # 波長変換
                 wavelengths = (pixels - center_px) * slope + center_wl
-                
                 ax.plot(wavelengths, y_data, label=f.name)
             except Exception as e:
                 st.warning(f"{f.name}: {e}")
@@ -534,7 +553,6 @@ def page_faq():
         if submit:
             f_j, u_j = handle_file_uploads(files)
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            # ステータス初期値: 未解決
             row = [ts, title, content, email, f_j, u_j, "未解決"]
             save_row_to_sheet(SHEET_FAQ_DATA, row)
 
@@ -542,7 +560,6 @@ def page_faq():
         df = get_data_from_gspread(SHEET_FAQ_DATA)
         if not df.empty:
             st.dataframe(df)
-            # 簡易表示
             for _, row in df.iterrows():
                 with st.expander(f"{row.get('質問タイトル')} ({row.get('ステータス')})"):
                     st.write(f"**質問内容:** {row.get('質問内容')}")
@@ -630,4 +647,66 @@ def page_contact():
             submit = st.form_submit_button("送信")
         
         if submit:
-            ts = datetime.now().strftime
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            row = [ts, c_type, detail, contact]
+            save_row_to_sheet(SHEET_CONTACT_DATA, row)
+
+    with tab1:
+        df = get_data_from_gspread(SHEET_CONTACT_DATA)
+        if not df.empty:
+            st.dataframe(df)
+
+
+# ---------------------------
+# --- 5. メインルーティング ---
+# ---------------------------
+def main():
+    st.sidebar.title("山根研 ツールキット")
+    
+    menu_items = [
+        "エピノート",
+        "メンテノート",
+        "🗓️ スケジュール・装置予約",
+        "IVデータ解析",
+        "PLデータ解析",
+        "議事録",
+        "知恵袋・質問箱",
+        "装置引き継ぎメモ",
+        "トラブル報告",
+        "連絡・問い合わせ",
+    ]
+    menu_selection = st.sidebar.radio("機能選択", menu_items)
+    
+    # メニュー切り替え検知 & キャッシュクリア
+    if 'menu_selection' not in st.session_state:
+        st.session_state.menu_selection = menu_selection
+    
+    if st.session_state.menu_selection != menu_selection:
+        # シート読み込みキャッシュのクリア
+        get_data_from_gspread.clear()
+        st.session_state.menu_selection = menu_selection
+
+    # ルーティング実行
+    if menu_selection == "エピノート":
+        page_epi_note()
+    elif menu_selection == "メンテノート":
+        page_mainte_note()
+    elif menu_selection == "🗓️ スケジュール・装置予約":
+        page_schedule_reservation()
+    elif menu_selection == "IVデータ解析":
+        page_iv_analysis()
+    elif menu_selection == "PLデータ解析":
+        page_pl_analysis()
+    elif menu_selection == "議事録":
+        page_meeting_note()
+    elif menu_selection == "知恵袋・質問箱":
+        page_faq()
+    elif menu_selection == "装置引き継ぎメモ":
+        page_device_handover()
+    elif menu_selection == "トラブル報告":
+        page_trouble_report()
+    elif menu_selection == "連絡・問い合わせ":
+        page_contact()
+
+if __name__ == "__main__":
+    main()
