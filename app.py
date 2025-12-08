@@ -566,8 +566,8 @@ def page_pl_analysis():
     with tab1:
         st.info("2つの既知の波長のピーク位置から校正係数(nm/pixel)を算出します。")
         col1, col2 = st.columns(2)
-        wl1 = col1.number_input("波長1 (nm)", value=546.1)
-        wl2 = col2.number_input("波長2 (nm)", value=577.0)
+        wl1 = col1.number_input("波長1 (nm)", value=1500)
+        wl2 = col2.number_input("波長2 (nm)", value=1570)
         
         f1 = col1.file_uploader("波長1のデータ", key="cal1")
         f2 = col2.file_uploader("波長2のデータ", key="cal2")
@@ -719,3 +719,4 @@ def main():
 if __name__ == "__main__":
     main()
     
+
