@@ -45,7 +45,7 @@ except Exception:
 # --- 定数（グローバル変数） ---
 # ---------------------------
 # 元のコードに合わせていますが、シート名はCSVに合わせて修正しています
-SPREADSHEET_NAME = "エピノート (2).xlsx" 
+SPREADSHEET_NAME = "エピノート.xlsx" 
 
 SHEET_EPI_DATA = "エピノート_データ"   
 SHEET_MAINTE_DATA = "メンテノート_データ" 
@@ -601,3 +601,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
