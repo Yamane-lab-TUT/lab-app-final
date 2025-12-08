@@ -563,13 +563,12 @@ def page_iv_analysis():
             for f in files:
                 df = load_data_file(f.getvalue(), f.name)
                 if df is not None:
-                    data_for_export.append(df) # オリジナルデータはExcel用に保持
+                    data_for_export.append(df) # Excel用にオリジナルデータを保持
                     
                     # --- ログ表示のための処理: 絶対値化 ---
                     plot_df = df.copy()
                     if use_log_scale:
-                        # Axis_X (Voltage) 以外の列（つまり電流列）を絶対値に変換
-                        # load_data_fileの仕様上、電流値は2列目(インデックス1)
+                        # 電流列を絶対値に変換 (load_data_fileの仕様上、電流値は2列目/インデックス1)
                         plot_df.iloc[:, 1] = np.abs(plot_df.iloc[:, 1])
                     
                     dfs_to_plot.append(plot_df)
@@ -577,7 +576,7 @@ def page_iv_analysis():
 
             # --- プロットループ ---
             for plot_df in dfs_to_plot:
-                # plot_dfの2列目が電流値 (絶対値化済みか、元の値)
+                # plot_dfの2列目が電流値
                 ax.plot(plot_df['Axis_X'], plot_df.iloc[:,1], label=plot_df.columns[1])
 
 
@@ -607,13 +606,13 @@ def page_iv_analysis():
             
             if data_for_export:
                 with st.spinner("Excel出力用にデータを統合中... (ファイル数が多い場合、時間がかかります)"):
-                    # reduceを使って、全てのDataFrameを'Axis_X'を基準に外部結合 (Outer Merge)
+                    # 1. データ統合
                     merged_df = reduce(lambda left, right: pd.merge(left, right, on='Axis_X', how='outer'), data_for_export)
                     
-                    # ★ Excel ValueError対策: 全ての列を数値型 (float) に強制変換
-                    for col in merged_df.columns:
-                        # 強制的にfloat型に変換することで、データ型起因のExcel書き出しエラーを回避します。
-                        merged_df[col] = pd.to_numeric(merged_df[col], errors='coerce')
+                    # 2. ★ Excel ValueError対策 (強化): 全ての列をfloat型に強制変換
+                    # これにより、Excelが扱えない object 型のデータ型が残るのを防ぎます。
+                    merged_df = merged_df.apply(pd.to_numeric, errors='coerce').astype(float)
+
                 
                 default_name = datetime.now().strftime("IV_Analysis_%Y%m%d")
                 filename_input = st.text_input("ファイル名 (.xlsx)", value=default_name, key="iv_filename")
@@ -851,5 +850,6 @@ if __name__ == "__main__":
         pass
         
     main()
+
 
 
