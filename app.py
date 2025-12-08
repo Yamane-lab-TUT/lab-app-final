@@ -547,31 +547,45 @@ from functools import reduce # reduceを使うため、ファイルの先頭で�
 def page_iv_analysis():
     st.header("⚡ IVデータ解析")
     
+    # 縦軸対数表示切り替えチェックボックス
     use_log_scale = st.checkbox("縦軸（電流）を対数表示にする", key="iv_log_scale")
     
     files = st.file_uploader("IVファイル(.txt)", accept_multiple_files=True)
     
-    data_for_export = []
+    data_for_export = [] # Excel出力用のオリジナルデータ
+    dfs_to_plot = []     # グラフ描画用のデータ (ログスケールの場合は絶対値化される)
     
     if files:
-        # --- データ読み込みとプロット準備 (Spinnerでフィードバック) ---
         with st.spinner("ファイルを読み込み、グラフを準備中..."):
             fig, ax = plt.subplots(figsize=(8, 6))
             has_plot = False
             
             for f in files:
-                # load_data_file は、X軸が 'Axis_X'、Y軸がファイル名のDataFrameを返す
                 df = load_data_file(f.getvalue(), f.name)
                 if df is not None:
-                    ax.plot(df['Axis_X'], df.iloc[:,1], label=f.name)
-                    data_for_export.append(df)
+                    data_for_export.append(df) # オリジナルデータはExcel用に保持
+                    
+                    # --- ログ表示のための処理: 絶対値化 ---
+                    plot_df = df.copy()
+                    if use_log_scale:
+                        # Axis_X (Voltage) 以外の列（つまり電流列）を絶対値に変換
+                        # load_data_fileの仕様上、電流値は2列目(インデックス1)
+                        plot_df.iloc[:, 1] = np.abs(plot_df.iloc[:, 1])
+                    
+                    dfs_to_plot.append(plot_df)
                     has_plot = True
+
+            # --- プロットループ ---
+            for plot_df in dfs_to_plot:
+                # plot_dfの2列目が電流値 (絶対値化済みか、元の値)
+                ax.plot(plot_df['Axis_X'], plot_df.iloc[:,1], label=plot_df.columns[1])
+
 
         if has_plot:
             # --- 縦軸のスケール設定 ---
             if use_log_scale:
                 ax.set_yscale('log')
-                st.warning("⚠️ 対数表示では、電流値がゼロまたは負の値のデータは表示されません。")
+                st.warning("⚠️ 対数表示のため、電流値は**絶対値**に変換してプロットしています。")
             else:
                 ax.set_yscale('linear')
             
@@ -592,11 +606,14 @@ def page_iv_analysis():
             st.subheader("📥 解析結果のエクセル出力")
             
             if data_for_export:
-                # --- データ統合処理 (Spinnerでフィードバック) ---
                 with st.spinner("Excel出力用にデータを統合中... (ファイル数が多い場合、時間がかかります)"):
                     # reduceを使って、全てのDataFrameを'Axis_X'を基準に外部結合 (Outer Merge)
-                    # これが処理の重い部分です。
                     merged_df = reduce(lambda left, right: pd.merge(left, right, on='Axis_X', how='outer'), data_for_export)
+                    
+                    # ★ Excel ValueError対策: 全ての列を数値型 (float) に強制変換
+                    for col in merged_df.columns:
+                        # 強制的にfloat型に変換することで、データ型起因のExcel書き出しエラーを回避します。
+                        merged_df[col] = pd.to_numeric(merged_df[col], errors='coerce')
                 
                 default_name = datetime.now().strftime("IV_Analysis_%Y%m%d")
                 filename_input = st.text_input("ファイル名 (.xlsx)", value=default_name, key="iv_filename")
@@ -612,6 +629,7 @@ def page_iv_analysis():
                 )
         else:
             st.warning("プロットできるデータがありませんでした。ファイル形式を確認してください。")
+            
 def page_pl_analysis():
     st.header("PLデータ解析")
     if 'pl_slope' not in st.session_state: st.session_state['pl_slope'] = None
@@ -833,4 +851,5 @@ if __name__ == "__main__":
         pass
         
     main()
+
 
