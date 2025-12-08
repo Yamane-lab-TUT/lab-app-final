@@ -659,14 +659,15 @@ def page_data_list(sheet_name, title, col_time, col_filter=None, col_memo=None, 
 def page_epi_note_recording():
     st.markdown("#### 📝 新しいエピノートを記録")
     
-    # フォーム全体
+    # st.formの処理は、入力フィールドとボタンを内包
     with st.form(key='epi_note_form'):
         
         # ユーザー入力フィールド
-        # (ここでは既存のコードの内容を正確に再現する必要があります。不足しているフィールドは既存のコードから補完してください)
-        
         ep_title = st.text_input("タイトル/番号 (例: 791)", key="epi_title")
-        ep_category = st.selectbox("カテゴリ", ["測定", "作製", "データ整理", "その他"], key="epi_category")
+        
+        # 【設定復元】カテゴリを D1 / D2 などに戻す
+        ep_category = st.selectbox("カテゴリ", ["D1", "D2", "その他"], key="epi_category") 
+        
         ep_memo = st.text_area("詳細メモ", height=200, key="epi_memo")
         
         uploaded_files = st.file_uploader(
@@ -678,16 +679,20 @@ def page_epi_note_recording():
         
         st.markdown("---")
         
-        # データのインポート expaneder (ご指摘のあったインデントエラーの発生源)
+        # データのインポート expaneder (インデントエラーの発生源)
         with st.expander("データのインポート"):
-            # インデントエラー回避のため、ダミーの処理として pass を挿入
+            # インデントエラー回避のため pass を挿入
             pass  
             
         # フォーム送信ボタン
         submit_button = st.form_submit_button("記録を保存") 
         
-    # フォームの処理はフォームの外側ではなく、submit_button の戻り値で制御
+    # フォームの処理
     if submit_button:
+        # datetime, json はグローバルに定義されていると仮定
+        from datetime import datetime
+        import json
+        
         if not ep_title:
             st.warning("番号 (例: 791) は必須項目です。")
             return
@@ -697,7 +702,6 @@ def page_epi_note_recording():
             with st.spinner("ファイルをGCSにアップロード中..."):
                 for file_obj in uploaded_files:
                     # 【修正済み】フォルダ名引数を削除し、GCSルートに保存
-                    # storage_clientはグローバルに定義されていると仮定
                     filename, url = upload_file_to_gcs(storage_client, file_obj) 
                     
                     if url:
@@ -723,7 +727,7 @@ def page_epi_note_recording():
             worksheet.append_row(row_data)
             st.success("✅ エピノートをアップロードしました！")
             
-            # キャッシュクリアとリランは、 Streamlit の仕様に従い、適切に配置
+            # キャッシュクリアとリラン
             if 'st.cache_data' in st.__dict__:
                 st.cache_data.clear()
             st.rerun()
@@ -759,18 +763,20 @@ def page_epi_note():
         display_gcs_files("エピノート") # 新規追加
 
 # ---------------------------
-# --- メンテノートページ ---
+# --- メンテノート記録ページ ---
 # ---------------------------
-# app (4).py: 約911行目から
 def page_mainte_recording():
     st.markdown("#### 🛠️ 新しいメンテノートを記録")
     
     # フォーム全体
     with st.form(key='mainte_note_form'):
         
-        # ユーザー入力フィールド (既存のコードに基づき再現)
+        # ユーザー入力フィールド
         mainte_title = st.text_input("メンテタイトル (例: プローブ調整)", key="mainte_title")
-        mainte_device = st.selectbox("対象装置", ["MOCVD", "IV/PL", "その他"], key="mainte_device")
+        
+        # 【設定復元】装置選択肢を一般的なものに戻す (元の設定がこれと異なる場合は調整が必要です)
+        mainte_device = st.selectbox("対象装置", ["MOCVD", "IV/PL", "その他"], key="mainte_device") 
+        
         memo_content = st.text_area("作業詳細メモ", height=200, key="mainte_memo")
         
         uploaded_files = st.file_uploader(
@@ -792,6 +798,10 @@ def page_mainte_recording():
         
     # フォームの処理
     if submit_button:
+        # datetime, json はグローバルに定義されていると仮定
+        from datetime import datetime
+        import json
+
         if not mainte_title:
             st.warning("メンテタイトルを入力してください。")
             return
@@ -1605,6 +1615,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
