@@ -386,109 +386,38 @@ def generate_signed_url(gcs_path, expiration_minutes=60):
         return None
         
 # ---------------------------
-# --- GCS アップロードユーティリティ ---
+# --- GCS へのファイルアップロード ---
 # ---------------------------
-def upload_file_to_gcs(storage_client_obj, file_obj, folder_name):
-    """
-    file_obj: streamlit uploaded file (has .name, .type, .getvalue()/read())
-    Returns: (original_filename, public_url) or (None, None) on error
-    """
-    if isinstance(storage_client_obj, DummyStorageClient) or storage is None:
-        # ダミー動作：未認証環境では None を返す
+def upload_file_to_gcs(uploaded_file, folder_name=""):
+    """StreamlitのアップロードファイルをGCSのルートに保存し、公開URLを返す。"""
+    if isinstance(storage_client, DummyStorageClient) or storage is None:
+        st.warning("GCSクライアントが認証されていません。ファイル保存スキップ。")
         return None, None
 
     try:
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        original_filename = file_obj.name
-        safe_filename = original_filename.replace(' ', '_').replace('/', '_')
-        gcs_filename = f"{folder_name}/{timestamp}_{safe_filename}"
+        current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_filename = uploaded_file.name.replace("/", "_").replace("\\", "_")
 
-        bucket = storage_client_obj.bucket(CLOUD_STORAGE_BUCKET_NAME)
+        # 【修正】フォルダ分けをせず、常にルート ('') に保存する
+        # gcs_filenameにはフォルダ名を含めない
+        gcs_filename = f"{current_time}_{safe_filename}"
+        
+        bucket = storage_client.bucket(CLOUD_STORAGE_BUCKET_NAME)
         blob = bucket.blob(gcs_filename)
 
-        # file_objはStreamlit UploadedFile なので getvalue() を使う
-        file_bytes = file_obj.getvalue()
-        blob.upload_from_string(file_bytes, content_type=file_obj.type if hasattr(file_obj, 'type') else 'application/octet-stream')
-
-        public_url = f"https://storage.googleapis.com/{CLOUD_STORAGE_BUCKET_NAME}/{url_quote(gcs_filename)}"
-        return original_filename, public_url
-    except Exception as e:
-        st.error(f"GCS にアップロードできませんでした: {e}")
-        return None, None
-
-# ---------------------------
-# --- 添付ファイル表示ユーティリティ（自動リサイズ） ---
-# ---------------------------
-
-def display_attached_files(row_dict, col_url_key, col_filename_key=None):
-    """
-    row_dict: pandas Series / dict representing a row
-    col_url_key: key name of the URL field (保存時は JSON array を期待)
-    col_filename_key: key name of filenames (optional, JSON array)
-    """
-    try:
-        if col_url_key not in row_dict or not row_dict[col_url_key]:
-            st.info("添付ファイルはありません。")
-            return
-
-        urls = []; filenames = []
-        try:
-            urls = json.loads(row_dict[col_url_key])
-            if not isinstance(urls, list): urls = [urls]
-        except Exception:
-            # GCSの署名付きURLが単一の文字列として入っている場合への対応
-            urls = [s.strip().strip('"') for s in str(row_dict[col_url_key]).split(',') if s.strip()]
-
-        if col_filename_key and col_filename_key in row_dict and row_dict[col_filename_key]:
-            try:
-                filenames = json.loads(row_dict[col_filename_key])
-                if not isinstance(filenames, list): filenames = [filenames]
-            except Exception:
-                filenames = []
+        # ファイルをメモリからアップロード
+        blob.upload_from_file(uploaded_file, rewind=True)
         
-        # 表示
-        for idx, url in enumerate(urls):
-            if not url:
-                continue
-            
-            label = filenames[idx] if idx < len(filenames) else os.path.basename(url)
-            
-            # URLからクエリパラメータ（?以降）を削除して拡張子を判定
-            url_no_query = url.split('?')[0] 
-            lower = url_no_query.lower()
-            
-            is_image = lower.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp')) 
-            is_pdf = lower.endswith('.pdf')
-            
-            st.markdown("---") # 各ファイルの区切り
-
-            if is_image:
-                st.markdown("**写真・画像:**")
-                try:
-                    # 修正済み: width=800 で横幅を800ピクセルに制限
-                    st.image(
-                        url, 
-                        caption="", 
-                        width=800 # 横幅を800ピクセルに固定し、高さは縦横比に合わせて自動調整
-                    )
-                except Exception:
-                    # 画像表示失敗時は警告とダウンロードリンクを表示
-                    st.warning("⚠️ 画像の表示に失敗しました。")
-                    
-                # 成功・失敗に関わらず、ダウンロードリンクは表示
-                st.markdown(f"🔗 [ファイルを開く/ダウンロード]({url})")
-            
-            elif is_pdf:
-                # PDFはリンクのみ
-                st.info(f"PDFファイルは、このページでは直接表示できません。")
-                st.markdown(f"🔗 [ファイルを開く/ダウンロード]({url})")
-
-            else:
-                # その他のファイルはリンクとして提供
-                st.markdown(f"🔗 [ファイルを開く/ダウンロード]({url})")
+        # make_public() は不要。非公開のまま、既存の認証済みロジックでアクセスする
+        
+        # 公開URLを生成
+        public_url = f"https://storage.googleapis.com/{CLOUD_STORAGE_BUCKET_NAME}/{url_quote(gcs_filename)}"
+        
+        return gcs_filename, public_url
 
     except Exception as e:
-        st.error(f"添付ファイルの表示に失敗しました: {e}")
+        st.error(f"GCSへのアップロード中にエラーが発生しました: {e}")
+        return None, None
 
 # ---------------------------
 # --- GCS ファイルリスト取得ユーティリティ ---
@@ -703,19 +632,11 @@ def page_data_list(sheet_name, title, col_time, col_filter=None, col_memo=None, 
 # ---------------------------
 # --- エピノートページ ---
 # ---------------------------
+# app (4).py: 約842行目から
 def page_epi_note_recording():
     st.markdown("#### 📝 新しいエピノートを記録")
     with st.form(key='epi_note_form'):
-        col1, col2 = st.columns(2)
-        with col1:
-            ep_category = st.selectbox(f"{EPI_COL_CATEGORY} (装置種別)", ["D1", "D2", "その他"], key='ep_category_input')
-        with col2:
-            ep_title = st.text_input("番号 (例: 791) (必須)", key='ep_title_input')
-        ep_memo = st.text_area("構造 (例: 10nm GaAs/AlGaAs/GaAs) (空白でも可)", height=100, key='ep_memo_input')
-        uploaded_files = st.file_uploader("添付ファイル (画像、グラフなど)", type=['jpg', 'jpeg', 'png', 'pdf', 'txt'], accept_multiple_files=True)
-        st.markdown("---")
-        submit_button = st.form_submit_button(label='記録をスプレッドシートに保存')
-
+# ... (中略)
     if submit_button:
         if not ep_title:
             st.warning("番号 (例: 791) は必須項目です。")
@@ -724,7 +645,8 @@ def page_epi_note_recording():
         if uploaded_files:
             with st.spinner("ファイルをGCSにアップロード中..."):
                 for file_obj in uploaded_files:
-                    filename, url = upload_file_to_gcs(storage_client, file_obj, "ep_notes")
+                    # 【修正】フォルダ名引数を削除
+                    filename, url = upload_file_to_gcs(storage_client, file_obj)
                     if url:
                         filenames_list.append(filename)
                         urls_list.append(url)
@@ -772,14 +694,11 @@ def page_epi_note():
 # ---------------------------
 # --- メンテノートページ ---
 # ---------------------------
+# app (4).py: 約911行目から
 def page_mainte_recording():
     st.markdown("#### 🛠️ 新しいメンテノートを記録")
     with st.form(key='mainte_note_form'):
-        mainte_title = st.text_input("メンテタイトル (例: D1 ドライポンプ交換) (必須)", key='mainte_title_input')
-        memo_content = st.text_area("詳細メモ", height=150, key='mainte_memo_input')
-        uploaded_files = st.file_uploader("添付ファイル (画像、グラフなど)", type=['jpg', 'jpeg', 'png', 'pdf', 'txt'], accept_multiple_files=True)
-        st.markdown("---")
-        submit_button = st.form_submit_button(label='記録をスプレッドシートに保存')
+# ... (中略)
     if submit_button:
         if not mainte_title:
             st.warning("メンテタイトルを入力してください。")
@@ -788,7 +707,8 @@ def page_mainte_recording():
         if uploaded_files:
             with st.spinner("ファイルをGCSにアップロード中..."):
                 for file_obj in uploaded_files:
-                    filename, url = upload_file_to_gcs(storage_client, file_obj, "mainte_notes")
+                    # 【修正】フォルダ名引数を削除
+                    filename, url = upload_file_to_gcs(storage_client, file_obj)
                     if url:
                         filenames_list.append(filename)
                         urls_list.append(url)
@@ -1577,6 +1497,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
