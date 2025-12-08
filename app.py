@@ -356,6 +356,36 @@ def combine_dataframes(dataframes, filenames, num_points=500):
     return combined_df
 
 # ---------------------------
+# --- 署名付きURL生成ユーティリティ ---
+# ---------------------------
+def generate_signed_url(gcs_path, expiration_minutes=60):
+    """
+    非公開GCSオブジェクトに対して、有効期限付きの署名付きURLを生成する。
+    """
+    if isinstance(storage_client, DummyStorageClient) or storage is None:
+        return None
+
+    try:
+        bucket_name = CLOUD_STORAGE_BUCKET_NAME
+        blob_name = gcs_path
+        
+        # 署名付きURLを生成
+        bucket = storage_client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+        
+        # サービスアカウントを使用して署名
+        signed_url = blob.generate_signed_url(
+            version="v4",
+            # 有効期限: 60分
+            expiration=timedelta(minutes=expiration_minutes), 
+            method="GET"
+        )
+        return signed_url
+    except Exception as e:
+        st.error(f"署名付きURLの生成中にエラーが発生しました: {e}")
+        return None
+        
+# ---------------------------
 # --- GCS アップロードユーティリティ ---
 # ---------------------------
 def upload_file_to_gcs(storage_client_obj, file_obj, folder_name):
@@ -524,16 +554,21 @@ def get_note_files_from_gcs(folder_type):
 # ---------------------------
 # --- GCSファイル閲覧機能 ---
 # ---------------------------
+# ---------------------------
+# --- GCSファイル閲覧機能 ---
+# ---------------------------
 def display_gcs_files(folder_type):
     st.markdown("#### 📂 GCS ファイルブラウザ (直接ファイル一覧)")
     st.caption(f"GCSバケット ({CLOUD_STORAGE_BUCKET_NAME}) のルートと /{folder_type}/ フォルダからファイルを検索しています。")
     
+    # get_note_files_from_gcs は以前の修正で定義済みと仮定
     file_list = get_note_files_from_gcs(folder_type)
 
     if not file_list:
         st.info("GCSからファイルが見つかりませんでした。")
         return
         
+    # ファイル名のみのリストで選択ボックスを作成
     selected_file_name = st.selectbox(
         f"GCS内のファイルを選択 (合計 {len(file_list)} 件)", 
         options=[item[0] for item in file_list],
@@ -541,41 +576,35 @@ def display_gcs_files(folder_type):
     )
     
     if selected_file_name:
-        # 選択されたファイルの情報を検索
+        # 選択されたファイルの情報を検索 (name, gcs_path, url)
         selected_info = next((item for item in file_list if item[0] == selected_file_name), None)
         
         if selected_info:
-            file_name, gcs_path, url = selected_info
+            file_name, gcs_path, public_url = selected_info
             
-            # `display_attached_files` と同様の表示ロジックを使用
+            # **【重要修正】非公開ファイルアクセスのため、署名付きURLを生成**
+            signed_url = generate_signed_url(gcs_path, expiration_minutes=5) # 有効期限5分
+            
+            if signed_url is None:
+                st.error("認証済みアクセスリンクの生成に失敗しました。GCS認証設定を確認してください。")
+                return
+            
+            # --- ファイル表示 ---
             st.markdown("---")
             st.markdown(f"**ファイル名:** `{file_name}`")
             st.markdown(f"**GCSパス:** `{gcs_path}`")
+            st.warning("※このリンクは署名付きURLであり、5分間の有効期限があります。")
             
-            # `display_attached_files` に合わせるため、擬似的な row_dict を作成
+            # display_attached_files が期待する形式に合わせる
             pseudo_row = {
-                'url': json.dumps([url]), 
+                'url': json.dumps([signed_url]), # 署名付きURLを使用
                 'filename': json.dumps([file_name])
             }
             
-            # ファイル表示ユーティリティを再利用
             # display_attached_files(row_dict, col_url_key, col_filename_key)
             display_attached_files(pseudo_row, 'url', 'filename')
         else:
             st.error("ファイル情報が見つかりません。")
-
-def page_epi_note_list():
-    detail_cols = [EPI_COL_TIMESTAMP, EPI_COL_CATEGORY, EPI_COL_NOTE_TYPE, EPI_COL_MEMO, EPI_COL_FILENAME]
-    page_data_list(
-        sheet_name=SHEET_EPI_DATA,
-        title="エピノート",
-        col_time=EPI_COL_TIMESTAMP,
-        col_filter=EPI_COL_CATEGORY,
-        col_memo=EPI_COL_MEMO,
-        col_url=EPI_COL_FILE_URL,
-        detail_cols=detail_cols,
-        col_filename=EPI_COL_FILENAME
-    )
 # ... (後略: page_mainte_list など、他のリスト表示関数もすべて page_data_list を呼び出しており、page_data_list が display_attached_files を呼び出しているため、自動的に新しい表示方法が適用されます。) ...
 
 # ---------------------------
@@ -1548,6 +1577,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
