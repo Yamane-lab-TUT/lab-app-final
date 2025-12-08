@@ -544,6 +544,8 @@ def page_contact_form():
 # ---------------------------
 from functools import reduce # reduceを使うため、ファイルの先頭でインポートされていることを確認
 
+from functools import reduce # reduceを使うため、ファイルの先頭でインポートされていることを確認
+
 def page_iv_analysis():
     st.header("⚡ IVデータ解析")
     
@@ -553,7 +555,7 @@ def page_iv_analysis():
     files = st.file_uploader("IVファイル(.txt)", accept_multiple_files=True)
     
     data_for_export = [] # Excel出力用のオリジナルデータ
-    dfs_to_plot = []     # グラフ描画用のデータ (ログスケールの場合は絶対値化される)
+    dfs_to_plot = []     # グラフ描画用のデータ
     
     if files:
         with st.spinner("ファイルを読み込み、グラフを準備中..."):
@@ -602,21 +604,26 @@ def page_iv_analysis():
             
             # --- Excel ダウンロード ---
             st.markdown("---")
-            st.subheader("📥 解析結果のエクセル出力")
+            st.subheader("📥 解析結果のエクセル出力 (1シート結合)")
+            st.info("⚠️ 1枚シートに共通の電圧軸で結合するため、**元の測定順序（行きと帰り）は失われ、電圧順に整理**されます。")
             
             if data_for_export:
-                with st.spinner("Excel出力用にデータを統合中... (ファイル数が多い場合、時間がかかります)"):
-                    # 1. データ統合
+                with st.spinner("Excel出力用にデータを統合中..."):
+                    # 1. データ統合: reduceを使って、全てのDataFrameを'Axis_X'を基準に外部結合 (Outer Merge)
                     merged_df = reduce(lambda left, right: pd.merge(left, right, on='Axis_X', how='outer'), data_for_export)
                     
-                    # 2. ★ Excel ValueError対策 (強化): 全ての列をfloat型に強制変換
-                    # これにより、Excelが扱えない object 型のデータ型が残るのを防ぎます。
+                    # 2. Excel ValueError対策 (強化): 全ての列をfloat型に強制変換
+                    # これが以前のValueErrorを解決するコアな処理です。
                     merged_df = merged_df.apply(pd.to_numeric, errors='coerce').astype(float)
+                    
+                    # 3. ユーザーの添付ファイルに合わせ、X軸の列名を 'Voltage_V' に変更
+                    merged_df.rename(columns={'Axis_X': 'Voltage_V'}, inplace=True)
 
                 
                 default_name = datetime.now().strftime("IV_Analysis_%Y%m%d")
                 filename_input = st.text_input("ファイル名 (.xlsx)", value=default_name, key="iv_filename")
                 
+                # 単一DataFrameをto_excelに渡す
                 excel_data = to_excel(merged_df)
                 
                 st.download_button(
@@ -850,6 +857,7 @@ if __name__ == "__main__":
         pass
         
     main()
+
 
 
 
