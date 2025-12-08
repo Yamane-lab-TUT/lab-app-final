@@ -252,19 +252,40 @@ def load_iv_data(uploaded_file):
 
 @st.cache_data
 def load_pl_data(uploaded_file):
-    """PLデータ（Pixel, Intensity）の読み込み"""
     try:
         content = uploaded_file.getvalue().decode('utf-8', errors='ignore').splitlines()
-        # コメント行スキップ
-        data_lines = [line.strip() for line in content if line.strip() and not line.strip().startswith(('#','!','/'))]
+        # 明らかなヘッダー行やコメント行を除去
+        data_lines = []
+        for line in content:
+            line = line.strip()
+            # 空行や、数字で始まらない行（ヘッダーとみなす）をスキップ
+            # ※マイナス符号(-)で始まる数値もあるため考慮
+            if not line: continue
+            if not (line[0].isdigit() or line.startswith('-') or line.startswith('.')):
+                continue
+            data_lines.append(line)
         
-        # 正規化（カンマ、タブをスペースに）
+        # 区切り文字（カンマ、タブ）をスペースに統一
         normalized = [re.sub(r'[\t,]+', ' ', line) for line in data_lines]
         
-        df = pd.read_csv(io.StringIO("\n".join(normalized)), sep=' ', header=None, names=['pixel', 'intensity'])
+        # データフレーム化
+        df = pd.read_csv(io.StringIO("\n".join(normalized)), sep=' ', header=None)
+        
+        # 2列以上あるか確認
+        if df.shape[1] < 2: return None
+        
+        # 最初の2列を使用（pixel, intensity）
+        df = df.iloc[:, :2]
+        df.columns = ['pixel', 'intensity']
+        
+        # 数値変換（変換できない行は削除）
         df = df.apply(pd.to_numeric, errors='coerce').dropna()
+        
+        # データが空ならNone
+        if df.empty: return None
+        
         return df
-    except:
+    except Exception:
         return None
 
 # ---------------------------
@@ -556,74 +577,62 @@ def page_iv_analysis():
 
 def page_pl_analysis():
     st.header("PLデータ解析")
-    
-    # Session Stateの初期化
     if 'pl_slope' not in st.session_state: st.session_state['pl_slope'] = None
 
-    tab1, tab2 = st.tabs(["Step 1: 波長校正", "Step 2: データプロット"])
-
-    # --- Step 1: Calibration ---
+    tab1, tab2 = st.tabs(["Step 1: 波長校正", "Step 2: 解析"])
     with tab1:
-        st.info("2つの既知の波長のピーク位置から校正係数(nm/pixel)を算出します。")
-        col1, col2 = st.columns(2)
-        wl1 = col1.number_input("波長1 (nm)", value=1500)
-        wl2 = col2.number_input("波長2 (nm)", value=1570)
+        st.info("2つの既知の波長ピークから校正")
+        c1, c2 = st.columns(2)
+        wl1 = c1.number_input("波長1 (nm)", value=1500.0)
+        wl2 = c2.number_input("波長2 (nm)", value=1570.0)
         
-        f1 = col1.file_uploader("波長1のデータ", key="cal1")
-        f2 = col2.file_uploader("波長2のデータ", key="cal2")
-
+        f1 = c1.file_uploader("波長1データ", key="c1")
+        f2 = c2.file_uploader("波長2データ", key="c2")
+        
         if f1 and f2:
             df1 = load_pl_data(f1)
             df2 = load_pl_data(f2)
             
-            if df1 is not None and df2 is not None:
-                p1 = df1.loc[df1['intensity'].idxmax(), 'pixel']
-                p2 = df2.loc[df2['intensity'].idxmax(), 'pixel']
-                
-                if p1 != p2:
-                    slope = (wl2 - wl1) / (p2 - p1)
-                    st.success(f"校正係数: {slope:.4f} nm/pixel")
-                    if st.button("この係数を保存して次へ"):
-                        st.session_state['pl_slope'] = slope
-                        st.session_state['pl_cal_base_wl'] = wl1
-                        st.session_state['pl_cal_base_px'] = p1
-                else:
-                    st.error("ピーク位置が同じです。")
+            # データが正しく読み込めているかチェック
+            if df1 is not None and not df1.empty and df2 is not None and not df2.empty:
+                try:
+                    p1 = df1.loc[df1['intensity'].idxmax(), 'pixel']
+                    p2 = df2.loc[df2['intensity'].idxmax(), 'pixel']
+                    
+                    if p1 != p2:
+                        slope = (wl2-wl1)/(p2-p1)
+                        st.success(f"係数: {slope:.4f}")
+                        if st.button("保存"): st.session_state['pl_slope'] = slope
+                    else: 
+                        st.error("ピーク位置が同じです。違うデータを選択してください。")
+                except Exception as e:
+                    st.error(f"解析エラー: データ形式を確認してください ({e})")
+            else:
+                st.error("データの読み込みに失敗しました。数値データ（2列）が含まれているか確認してください。")
 
-    # --- Step 2: Analysis ---
     with tab2:
-        if st.session_state['pl_slope'] is None:
-            st.warning("Step 1 で校正を行ってください。")
+        if not st.session_state['pl_slope']:
+            st.warning("校正してください")
         else:
             slope = st.session_state['pl_slope']
-            base_wl = st.session_state.get('pl_cal_base_wl', 546.1)
-            base_px = st.session_state.get('pl_cal_base_px', 0)
-            
-            st.write(f"現在の校正係数: `{slope:.4f}` nm/pixel")
-            
-            center_wl = st.number_input("測定中心波長 (nm)", value=1700)
-            # 中心ピクセル（通常はCCDの中央、例: 256 or 512）
-            # ここでは簡易的に、校正時の基準を用いるか、固定値(256.5など)を使用するか選択
-            # 既存コードに合わせて補正ロジックを適用
-            
-            files = st.file_uploader("測定データ", accept_multiple_files=True, key="pl_meas")
+            cw = st.number_input("中心波長", value=1700)
+            files = st.file_uploader("測定データ", accept_multiple_files=True, key="pl_m")
             if files:
                 fig, ax = plt.subplots()
+                has_plot = False
                 for f in files:
                     df = load_pl_data(f)
-                    if df is not None:
-                        # 波長変換: (pixel - center_pixel_of_detector) * slope + center_wavelength
-                        # ただし、簡易校正の場合は (pixel - base_px) * slope + base_wl のオフセットを使うこともある
-                        # ここでは元のコードのロジック「(df['pixel'] - 256.5) * slope + center_wavelength」を採用
-                        center_pixel_const = 256.5 
-                        df['wavelength'] = (df['pixel'] - center_pixel_const) * slope + center_wl
-                        
-                        ax.plot(df['wavelength'], df['intensity'], label=f.name)
+                    if df is not None and not df.empty:
+                        df['wl'] = (df['pixel'] - 256.5) * slope + cw
+                        ax.plot(df['wl'], df['intensity'], label=f.name)
+                        has_plot = True
                 
-                ax.set_xlabel("Wavelength (nm)")
-                ax.set_ylabel("Intensity")
-                ax.legend()
-                st.pyplot(fig)
+                if has_plot:
+                    ax.set_xlabel("Wavelength")
+                    ax.legend()
+                    st.pyplot(fig)
+                else:
+                    st.warning("プロットできるデータがありませんでした。")
 
 # ---------------------------
 # --- Page: Calendar ---
@@ -719,4 +728,5 @@ def main():
 if __name__ == "__main__":
     main()
     
+
 
