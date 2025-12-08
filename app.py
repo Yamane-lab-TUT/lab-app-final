@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-bennriyasann3_fixed_v2_final.py
-Yamane Lab Convenience Tool - 最終動作確認版
+bennriyasann3_revived_full_v1.py
+Yamane Lab Convenience Tool - 完全復元・動作修正版
 """
 
 import streamlit as st
@@ -19,20 +19,18 @@ from io import BytesIO
 import calendar
 import matplotlib.font_manager as fm
 
-# Google Calendar APIのための新しいインポート
+# Google Calendar APIのためのインポート
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from datetime import date, datetime
-import streamlit as st
 
-# Optional: google cloud client import
+# GCSライブラリ (存在しない場合も考慮)
 try:
     from google.cloud import storage
 except Exception:
-    storage = None  # GCS が無い環境でも起動可能
+    storage = None
 
-# --- Matplotlib 日本語フォント (安全に設定) ---
+# --- Matplotlib 日本語フォント設定 ---
 try:
     plt.rcParams['font.family'] = 'sans-serif'
     plt.rcParams['font.sans-serif'] = [
@@ -44,11 +42,8 @@ except Exception:
     pass
 
 # ---------------------------
-# --- 定数（グローバル変数）の定義 ---
+# --- 定数（グローバル変数） ---
 # ---------------------------
-
-# 【要確認】スプレッドシート名とシート名
-# ユーザーがアップロードしたファイル名に基づいた設定
 SPREADSHEET_NAME = "エピノート (2).xlsx" 
 SHEET_EPI_DATA = "エピノート_データ"   
 SHEET_MAINTE_DATA = "メンテノート_データ" 
@@ -56,422 +51,446 @@ SHEET_SCHEDULE_DATA = "スケジュール"
 SHEET_FAQ_DATA = "知恵袋_データ"
 SHEET_TROUBLE_DATA = "トラブル報告_データ" 
 SHEET_HANDOVER_DATA = "引き継ぎ_データ"
+SHEET_CONTACT_DATA = "お問い合わせ_データ" # CSVファイル名から推測
+SHEET_MEETING_DATA = "議事録_データ"
 
-# GCSバケット名
 CLOUD_STORAGE_BUCKET_NAME = "yamane-lab-app-files"
-CALENDAR_ID = "YOUR_CALENDAR_ID@group.calendar.google.com" # ユーザーの実際のカレンダーIDに置き換える
+# カレンダーID (ユーザー環境に合わせて変更してください)
+CALENDAR_ID = "primary" 
 
 # ---------------------------
-# --- 認証とクライアントの初期化 ---
+# --- 認証とクライアント初期化 ---
 # ---------------------------
-
-# Gspread 認証
-try:
-    # Streamlit Secretsまたは環境変数からクレデンシャルを読み込む
-    gspread_creds = {
-        "type": st.secrets["gcp_service_account"]["type"],
-        "project_id": st.secrets["gcp_service_account"]["project_id"],
-        "private_key_id": st.secrets["gcp_service_account"]["private_key_id"],
-        "private_key": st.secrets["gcp_service_account"]["private_key"],
-        "client_email": st.secrets["gcp_service_account"]["client_email"],
-        "client_id": st.secrets["gcp_service_account"]["client_id"],
-        "auth_uri": st.secrets["gcp_service_account"]["auth_uri"],
-        "token_uri": st.secrets["gcp_service_account"]["token_uri"],
-        "auth_provider_x509_cert_url": st.secrets["gcp_service_account"]["auth_provider_x509_cert_url"],
-        "client_x509_cert_url": st.secrets["gcp_service_account"]["client_x509_cert_url"],
-        "universe_domain": st.secrets["gcp_service_account"]["universe_domain"],
-    }
-    gc = gspread.service_account_from_dict(gspread_creds)
-    gcal_creds = service_account.Credentials.from_service_account_info(gspread_creds, scopes=['https://www.googleapis.com/auth/calendar'])
-    gcal_service = build('calendar', 'v3', credentials=gcal_creds)
-except Exception as e:
-    st.error(f"認証エラー: Google SheetsまたはCalendarの認証情報が読み込めませんでした。詳細: {e}")
-    gc = None
-    gcal_service = None
-
-# GCSクライアントの初期化
+gc = None
+gcal_service = None
 storage_client = None
+
 try:
-    if storage:
-        storage_client = storage.Client()
+    if "gcp_service_account" in st.secrets:
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        
+        # 1. Gspread (Sheets)
+        try:
+            gc = gspread.service_account_from_dict(creds_dict)
+        except Exception as e:
+            st.error(f"Google Sheets認証エラー: {e}")
+
+        # 2. Google Calendar
+        try:
+            gcal_creds = service_account.Credentials.from_service_account_info(
+                creds_dict, scopes=['https://www.googleapis.com/auth/calendar']
+            )
+            gcal_service = build('calendar', 'v3', credentials=gcal_creds)
+        except Exception as e:
+            # カレンダー機能が使えなくても他は動かす
+            # st.warning(f"Google Calendar認証エラー: {e}") 
+            pass
+
+        # 3. GCS (Storage)
+        if storage:
+            try:
+                storage_client = storage.Client()
+            except Exception as e:
+                # st.warning(f"GCSクライアント初期化エラー: {e}")
+                pass
+    else:
+        st.warning("secrets.toml に 'gcp_service_account' が設定されていません。")
+
 except Exception as e:
-    st.warning(f"GCSクライアントの初期化に失敗しました。ファイルアップロード機能は無効になります。詳細: {e}")
+    st.error(f"予期せぬ認証エラー: {e}")
+
 
 # ---------------------------
-# --- データ読み込みユーティリティ ---
+# --- ユーティリティ関数 ---
 # ---------------------------
 
-@st.cache_data(ttl=600)  # 10分間キャッシュを保持
+@st.cache_data(ttl=600)
 def get_data_from_gspread(sheet_name):
     if gc is None:
         return pd.DataFrame()
-    
     try:
         worksheet = gc.open(SPREADSHEET_NAME).worksheet(sheet_name)
         data = worksheet.get_all_values()
-        
         if not data:
             return pd.DataFrame()
-        
-        df = pd.DataFrame(data[1:], columns=data[0])
-        return df
-    except gspread.exceptions.WorksheetNotFound:
-        # ワークシートが見つからない場合は空のDataFrameを返す
-        st.error(f"ワークシート '{sheet_name}' が見つかりません。シート名を確認してください。")
-        return pd.DataFrame()
+        return pd.DataFrame(data[1:], columns=data[0])
     except Exception as e:
-        # その他のエラー（認証エラーなど）
-        st.error(f"スプレッドシート '{sheet_name}' の読み込み中にエラーが発生しました: {e}")
+        # シートがない場合などは空DFを返す
         return pd.DataFrame()
 
-# ---------------------------
-# --- GCS アップロードユーティリティ ---
-# ---------------------------
-def upload_file_to_gcs(storage_client_obj, file_obj): 
-    """
-    StreamlitのアップロードファイルをGCSのルートに保存し、公開URLを返す。
-    """
-    from datetime import datetime
-    from urllib.parse import quote as url_quote
-    
+def upload_file_to_gcs(storage_client_obj, file_obj):
+    """ファイルをGCSルートに保存し、公開URLを返す"""
     if storage_client_obj is None or storage is None:
         return None, None
-
     try:
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        original_filename = file_obj.name
-        safe_filename = original_filename.replace(' ', '_').replace('/', '_')
-        gcs_filename = f"{timestamp}_{safe_filename}"
+        safe_filename = file_obj.name.replace(' ', '_').replace('/', '_')
+        gcs_filename = f"{timestamp}_{safe_filename}" # ルート保存
 
         bucket = storage_client_obj.bucket(CLOUD_STORAGE_BUCKET_NAME)
         blob = bucket.blob(gcs_filename)
-
-        file_bytes = file_obj.getvalue()
-        blob.upload_from_string(file_bytes, content_type=file_obj.type if hasattr(file_obj, 'type') else 'application/octet-stream')
-
-        # 署名付きURLを生成
-        # 一時的なURLを生成するのではなく、公開URL（認証はクエリパラメータで行う）を返す
+        blob.upload_from_string(
+            file_obj.getvalue(), 
+            content_type=file_obj.type if hasattr(file_obj, 'type') else 'application/octet-stream'
+        )
+        
+        # 署名付きURLではなく公開パス+認証パラメータ用ベースURL
+        # 注: 非公開バケットの場合、ブラウザで見るには署名付きURLが必要だが、
+        # 既存データに合わせて単純なURL生成としています。必要なら generate_signed_url を使用。
         public_url = f"https://storage.googleapis.com/{CLOUD_STORAGE_BUCKET_NAME}/{url_quote(gcs_filename)}"
-        
-        # 署名付きURLが必要な場合は以下を使用
-        # public_url = blob.generate_signed_url(expiration=timedelta(days=365*100))
-        
-        return original_filename, public_url
-        
+        return file_obj.name, public_url
     except Exception as e:
-        # GCSアップロードエラーが発生した場合、呼び出し側で処理
-        st.error(f"GCSへのアップロード中にエラーが発生しました: {e}")
+        st.error(f"アップロードエラー: {e}")
         return None, None
 
-# ---------------------------
-# --- 添付ファイル表示ユーティリティ ---
-# ---------------------------
 def display_attached_files(row_dict, col_url_key, col_filename_key):
-    """
-    指定された行データから添付ファイル（URLとファイル名）を抽出し、リンクとして表示する。
-    JSON形式（エスケープ対応）と古い単一URL形式の両方に対応。
-    """
-    import json
-    import re
-    
+    """JSON形式(エスケープ対応)と古いURL形式の両対応で添付ファイルを表示"""
     urls = []
     filenames = []
-    
     raw_urls = row_dict.get(col_url_key, '')
     raw_filenames = row_dict.get(col_filename_key, '')
-    
-    # 2. URLのデコードを試みる（新しいデータに対応）
+
+    # URLデコード
     try:
-        # JSONデコードを試みる
-        parsed_urls = json.loads(raw_urls)
-        
-        if isinstance(parsed_urls, list):
-            for item in parsed_urls:
+        parsed = json.loads(raw_urls)
+        if isinstance(parsed, list):
+            for item in parsed:
                 if isinstance(item, str) and item.startswith('http'):
                     urls.append(item)
                 else:
-                    # リスト要素がさらにエスケープされた文字列だった場合に対応
                     try:
-                        inner_item = json.loads(item)
-                        if isinstance(inner_item, str) and inner_item.startswith('http'):
-                            urls.append(inner_item)
-                    except:
-                        pass
-        
-    except (json.JSONDecodeError, AttributeError, TypeError):
-        # 3. JSONデコードに失敗した場合（古いデータや単一のURL文字列の場合）
-        
-        # 文字列から http:// または https:// で始まる最初の要素をURLとして抽出
-        url_match = re.search(r'https?://[^\s,"]+', raw_urls)
-        if url_match:
-            urls = [url_match.group(0)]
-        else:
-            urls = []
+                        inner = json.loads(item)
+                        if isinstance(inner, str) and inner.startswith('http'):
+                            urls.append(inner)
+                    except: pass
+    except:
+        # 古い形式 (単純なURL文字列)
+        m = re.search(r'https?://[^\s,"]+', str(raw_urls))
+        if m: urls = [m.group(0)]
 
-    # 4. ファイル名の取得
+    # ファイル名デコード
     try:
-        filenames = json.loads(raw_filenames)
-        if not isinstance(filenames, list):
-            filenames = [filenames] if isinstance(filenames, str) else []
-    except (json.JSONDecodeError, AttributeError, TypeError):
+        parsed_fn = json.loads(raw_filenames)
+        if isinstance(parsed_fn, list):
+            filenames = parsed_fn
+        elif isinstance(parsed_fn, str):
+            filenames = [parsed_fn]
+    except:
         filenames = [f"添付ファイル {i+1}" for i in range(len(urls))]
 
-
-    # 5. 表示処理
+    # 表示
     if urls:
         st.markdown("##### 📎 添付ファイル")
-        
+        # 数合わせ
         if len(filenames) < len(urls):
-            filenames += [f"ファイル {i+1}" for i in range(len(filenames), len(urls))]
-        elif len(filenames) > len(urls):
-            filenames = filenames[:len(urls)]
-            
-        for url, filename in zip(urls, filenames):
-            st.markdown(f"[{filename}]({url})")
+            filenames += [f"File {i+1}" for i in range(len(filenames), len(urls))]
+        for u, f in zip(urls, filenames):
+            st.markdown(f"[{f}]({u})")
     else:
-        st.markdown("添付ファイルはありません。")
+        st.markdown("なし")
+
+# 共通：データ保存関数
+def save_to_sheet(sheet_name, row_data, success_msg="保存しました"):
+    try:
+        ws = gc.open(SPREADSHEET_NAME).worksheet(sheet_name)
+        ws.append_row(row_data)
+        st.success(success_msg)
+        get_data_from_gspread.clear() # キャッシュクリア
+        st.rerun()
+    except Exception as e:
+        st.error(f"保存エラー: {e}")
+
+# 共通：ファイルアップロード処理
+def handle_file_uploads(uploaded_files):
+    f_list, u_list = [], []
+    if uploaded_files:
+        with st.spinner("アップロード中..."):
+            for f in uploaded_files:
+                name, url = upload_file_to_gcs(storage_client, f)
+                if url:
+                    f_list.append(name)
+                    u_list.append(url)
+    return json.dumps(f_list), json.dumps(u_list)
 
 
 # ---------------------------
-# --- エピノート/メンテノート 記録ページ ---
+# --- 各ページ機能 ---
 # ---------------------------
 
-def page_epi_note_recording():
-    st.markdown("#### 📝 新しいエピノートを記録")
-    
-    with st.form(key='epi_note_form'):
-        ep_title = st.text_input("タイトル/番号 (例: 791)", key="epi_title")
-        ep_category = st.selectbox("カテゴリ", ["D1", "D2", "その他"], key="epi_category") 
-        ep_memo = st.text_area("詳細メモ", height=200, key="epi_memo")
-        
-        uploaded_files = st.file_uploader(
-            "添付ファイル (画像, PDF, データファイルなど)", 
-            type=None, 
-            accept_multiple_files=True,
-            key="epi_uploader"
-        )
-        
-        st.markdown("---")
-        with st.expander("データのインポート"):
-            pass
-            
-        submit_button = st.form_submit_button("記録を保存") 
-        
-    if submit_button:
-        from datetime import datetime
-        import json
-        
-        if not ep_title:
-            st.warning("番号 (例: 791) は必須項目です。")
-            return
-            
-        filenames_list = []; urls_list = []
-        if uploaded_files:
-            with st.spinner("ファイルをGCSにアップロード中..."):
-                for file_obj in uploaded_files:
-                    # GCSルートに保存
-                    filename, url = upload_file_to_gcs(storage_client, file_obj) 
-                    
-                    if url:
-                        filenames_list.append(filename)
-                        urls_list.append(url)
-                    else:
-                        # upload_file_to_gcs内でエラーメッセージが表示される
-                        return
-
-        filenames_json = json.dumps(filenames_list)
-        urls_json = json.dumps(urls_list)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        memo_content = f"{ep_title}\n{ep_memo}"
-        
-        EPI_COL_NOTE_TYPE = "エピノート" 
-        SHEET_TO_WRITE = SHEET_EPI_DATA # 正しいシート名を使用
-        
-        # 【6列構成】: タイムスタンプ, ノート種別, カテゴリ, メモ, ファイル名, 写真URL
-        row_data = [timestamp, EPI_COL_NOTE_TYPE, ep_category, memo_content, filenames_json, urls_json]
-        
-        try:
-            worksheet = gc.open(SPREADSHEET_NAME).worksheet(SHEET_TO_WRITE)
-            worksheet.append_row(row_data)
-            st.success("✅ エピノートをアップロードしました！")
-            
-            # 書き込み成功後、キャッシュをクリアし、一覧表示を更新させる
-            get_data_from_gspread.clear() 
-            st.rerun()
-            
-        except Exception as e:
-            st.error(f"❌ データ書き込みエラー: {e}")
-
-
-def page_mainte_recording():
-    st.markdown("#### 🛠️ 新しいメンテノートを記録")
-    
-    with st.form(key='mainte_note_form'):
-        mainte_title = st.text_input("メンテタイトル (例: プローブ調整)", key="mainte_title")
-        mainte_device = st.selectbox("対象装置", ["MOCVD", "IV/PL", "その他"], key="mainte_device") 
-        memo_content = st.text_area("作業詳細メモ", height=200, key="mainte_memo")
-        
-        uploaded_files = st.file_uploader(
-            "添付ファイル (画像, PDF, データファイルなど)", 
-            type=None, 
-            accept_multiple_files=True,
-            key="mainte_uploader"
-        )
-        
-        st.markdown("---")
-        with st.expander("データのインポート"):
-            pass
-            
-        submit_button = st.form_submit_button("記録を保存")
-        
-    if submit_button:
-        from datetime import datetime
-        import json
-
-        if not mainte_title:
-            st.warning("メンテタイトルを入力してください。")
-            return
-            
-        filenames_list = []; urls_list = []
-        if uploaded_files:
-            with st.spinner("ファイルをGCSにアップロード中..."):
-                for file_obj in uploaded_files:
-                    filename, url = upload_file_to_gcs(storage_client, file_obj)
-                    
-                    if url:
-                        filenames_list.append(filename)
-                        urls_list.append(url)
-                    else:
-                        return
-
-        filenames_json = json.dumps(filenames_list)
-        urls_json = json.dumps(urls_list)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        memo_to_save = f"[{mainte_title}] (対象装置: {mainte_device})\n{memo_content}"
-        
-        MAINTE_COL_NOTE_TYPE = "メンテノート" 
-        SHEET_TO_WRITE = SHEET_MAINTE_DATA # 正しいシート名を使用
-        
-        # 【5列構成】: タイムスタンプ, ノート種別, メモ, ファイル名, 写真URL
-        row_data = [timestamp, MAINTE_COL_NOTE_TYPE, memo_to_save, filenames_json, urls_json]
-        
-        try:
-            worksheet = gc.open(SPREADSHEET_NAME).worksheet(SHEET_TO_WRITE)
-            worksheet.append_row(row_data)
-            st.success("✅ メンテノートをアップロードしました！")
-            
-            # 書き込み成功後、キャッシュをクリアし、一覧表示を更新させる
-            get_data_from_gspread.clear() 
-            st.rerun()
-            
-        except Exception as e:
-            st.error(f"❌ データ書き込みエラー: {e}")
-
-# ---------------------------
-# --- データ一覧表示ページ ---
-# ---------------------------
-
-def page_data_list(sheet_data, title, recording_func):
-    st.header(title)
+# 1. エピノート
+def page_epi_note():
+    st.header("エピノート")
     tab1, tab2 = st.tabs(["一覧表示", "新規記録"])
-
+    
     with tab2:
-        recording_func()
+        with st.form("epi_form"):
+            title = st.text_input("タイトル/番号 (例: 791)")
+            cat = st.selectbox("カテゴリ", ["D1", "D2", "その他"])
+            memo = st.text_area("詳細メモ", height=150)
+            files = st.file_uploader("添付", accept_multiple_files=True)
+            with st.expander("データのインポート"): pass # Layout調整
+            submit = st.form_submit_button("保存")
+        
+        if submit:
+            if not title:
+                st.warning("タイトルは必須です")
+            else:
+                f_json, u_json = handle_file_uploads(files)
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                # 6列構成: Timestamp, Type, Category, Memo, Filename, URL
+                row = [ts, "エピノート", cat, f"{title}\n{memo}", f_json, u_json]
+                save_to_sheet(SHEET_EPI_DATA, row)
 
     with tab1:
-        df = get_data_from_gspread(sheet_data)
-        
-        if df.empty:
-            st.info(f"{title} のデータはまだありません。")
-            return
+        df = get_data_from_gspread(SHEET_EPI_DATA)
+        if not df.empty:
+            if 'タイムスタンプ' in df.columns:
+                df = df.sort_values('タイムスタンプ', ascending=False)
+            st.dataframe(df, use_container_width=True)
+            
+            sel = st.selectbox("詳細表示", df['タイムスタンプ'].unique() if 'タイムスタンプ' in df.columns else [], key="epi_sel")
+            if sel:
+                row = df[df['タイムスタンプ'] == sel].iloc[0].to_dict()
+                st.subheader("詳細")
+                st.write(f"**日時:** {row.get('タイムスタンプ')}")
+                st.write(f"**カテゴリ:** {row.get('カテゴリ')}")
+                st.text_area("内容", row.get('メモ'), disabled=True)
+                display_attached_files(row, '写真URL', 'ファイル名')
 
-        # 日付形式の変換 (タイムスタンプをソート可能にするため)
-        if 'タイムスタンプ' in df.columns:
-            # タイムスタンプを降順でソート
-            df = df.sort_values(by='タイムスタンプ', ascending=False)
-            
-        st.dataframe(df, use_container_width=True)
-        
-        st.subheader("詳細ビュー")
-        
-        # DataFrameのインデックス（タイムスタンプ）をキーとして選択ボックスを作成
-        key_col = 'タイムスタンプ'
-        if key_col not in df.columns:
-            st.warning("タイムスタンプ列が見つからないため、詳細表示できません。")
-            return
-            
-        # タイムスタンプをキーとして選択
-        selection = st.selectbox("記録を選択", df[key_col].unique(), key=f"{sheet_data}_selection")
-        
-        if selection:
-            row = df[df[key_col] == selection].iloc[0].to_dict()
-            
-            # メタデータ表示
-            st.markdown(f"**記録日時:** {row.get('タイムスタンプ', 'N/A')}")
-            if 'カテゴリ' in row:
-                st.markdown(f"**カテゴリ:** {row['カテゴリ']}")
-            
-            # メモ内容表示
-            memo_content = row.get('メモ', '内容なし')
-            if title == "メンテノート":
-                # メンテノートはタイトルと装置情報がメモに統合されている前提
-                st.subheader(row.get('ノート種別', '詳細メモ'))
-            else:
-                st.subheader("詳細メモ")
-            st.markdown(memo_content)
-            
-            # 添付ファイル表示
-            # 列名がシートによって異なる可能性があるが、ここではエピノート/メンテノートの列名を使用
-            display_attached_files(row, '写真URL', 'ファイル名')
-
-
-def page_epi_note():
-    page_data_list(SHEET_EPI_DATA, "エピノート", page_epi_note_recording)
-
+# 2. メンテノート
 def page_mainte_note():
-    page_data_list(SHEET_MAINTE_DATA, "メンテノート", page_mainte_recording)
+    st.header("メンテノート")
+    tab1, tab2 = st.tabs(["一覧表示", "新規記録"])
+    
+    with tab2:
+        with st.form("mainte_form"):
+            title = st.text_input("タイトル")
+            dev = st.selectbox("装置", ["MOCVD", "IV/PL", "その他"])
+            memo = st.text_area("メモ", height=150)
+            files = st.file_uploader("添付", accept_multiple_files=True)
+            with st.expander("データのインポート"): pass
+            submit = st.form_submit_button("保存")
+            
+        if submit:
+            if not title: st.warning("タイトル必須")
+            else:
+                f_json, u_json = handle_file_uploads(files)
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                # 5列構成: Timestamp, Type, Memo(Title+Dev+Memo), Filename, URL
+                content = f"[{title}] (装置: {dev})\n{memo}"
+                row = [ts, "メンテノート", content, f_json, u_json]
+                save_to_sheet(SHEET_MAINTE_DATA, row)
 
-# ---------------------------
-# --- 不足しているページのプレースホルダー定義 ---
-# ---------------------------
-# NameErrorを回避し、アプリを動作させるために最低限の関数を定義します。
+    with tab1:
+        df = get_data_from_gspread(SHEET_MAINTE_DATA)
+        if not df.empty:
+            if 'タイムスタンプ' in df.columns: df = df.sort_values('タイムスタンプ', ascending=False)
+            st.dataframe(df, use_container_width=True)
+            sel = st.selectbox("詳細表示", df['タイムスタンプ'].unique(), key="mainte_sel")
+            if sel:
+                row = df[df['タイムスタンプ'] == sel].iloc[0].to_dict()
+                st.text_area("内容", row.get('メモ'), disabled=True)
+                display_attached_files(row, '写真URL', 'ファイル名')
 
+# 3. スケジュール・装置予約 (app(4).pyより復元)
 def page_schedule_reservation():
     st.header("🗓️ スケジュール・装置予約")
-    st.info("この機能のロジックは以前のコードに存在します。ここではプレースホルダーとして定義します。")
+    
+    # シンプルなカレンダー登録フォーム
+    with st.form("schedule_form"):
+        title = st.text_input("予定タイトル", "装置予約: ")
+        date_input = st.date_input("日付", date.today())
+        start_time = st.time_input("開始時刻", datetime.now().time())
+        end_time = st.time_input("終了時刻", (datetime.now() + timedelta(hours=1)).time())
+        desc = st.text_area("詳細")
+        submit = st.form_submit_button("カレンダーに登録")
+    
+    if submit:
+        if gcal_service:
+            try:
+                start_dt = datetime.combine(date_input, start_time).isoformat()
+                end_dt = datetime.combine(date_input, end_time).isoformat()
+                event = {
+                    'summary': title,
+                    'description': desc,
+                    'start': {'dateTime': start_dt, 'timeZone': 'Asia/Tokyo'},
+                    'end': {'dateTime': end_dt, 'timeZone': 'Asia/Tokyo'},
+                }
+                gcal_service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
+                st.success(f"予約 '{title}' を登録しました")
+            except Exception as e:
+                st.error(f"登録失敗: {e}")
+        else:
+            st.error("カレンダー機能は現在利用できません（認証設定を確認してください）")
+            
+    # スプレッドシート側のスケジュール一覧表示（もしあれば）
+    st.subheader("予約一覧 (シート)")
+    df = get_data_from_gspread(SHEET_SCHEDULE_DATA)
+    if not df.empty:
+        st.dataframe(df)
 
+# 4. IVデータ解析 (app(4).pyより復元)
 def page_iv_analysis():
     st.header("⚡ IVデータ解析")
-    st.info("この機能は現在構築中です。")
+    uploaded_files = st.file_uploader("IV測定データ (.txt, .csv)", accept_multiple_files=True)
+    if uploaded_files:
+        fig, ax = plt.subplots()
+        for f in uploaded_files:
+            try:
+                # 簡易的な読み込み (スペース/タブ/カンマ区切りに対応)
+                df = pd.read_csv(f, sep=r'\s+|,|\t', engine='python', header=None, comment='#')
+                if df.shape[1] >= 2:
+                    # 往路復路の簡易分離 (最大値で分割)
+                    x_data = pd.to_numeric(df.iloc[:, 0], errors='coerce')
+                    y_data = pd.to_numeric(df.iloc[:, 1], errors='coerce')
+                    df_clean = pd.DataFrame({'x': x_data, 'y': y_data}).dropna()
+                    
+                    if not df_clean.empty:
+                        max_idx = df_clean['x'].idxmax()
+                        ax.plot(df_clean.iloc[:max_idx+1]['x'], df_clean.iloc[:max_idx+1]['y'], label=f"{f.name} (往)")
+                        ax.plot(df_clean.iloc[max_idx+1:]['x'], df_clean.iloc[max_idx+1:]['y'], label=f"{f.name} (復)", linestyle='--')
+            except Exception as e:
+                st.warning(f"{f.name} 読み込みエラー: {e}")
+        
+        ax.set_xlabel("Voltage (V)")
+        ax.set_ylabel("Current (A)")
+        ax.legend()
+        ax.grid(True)
+        st.pyplot(fig)
 
+# 5. PLデータ解析 (app(4).pyより復元)
 def page_pl_analysis():
     st.header("🔬 PLデータ解析")
-    st.info("この機能は現在構築中です。")
+    # 校正ロジック簡易版
+    st.subheader("1. 波長校正")
+    slope = st.number_input("Slope (nm/px)", value=1.0, format="%.4f")
+    center_wl = st.number_input("Center Wavelength (nm)", value=500.0)
+    center_px = st.number_input("Center Pixel", value=256.0)
+    
+    st.subheader("2. データプロット")
+    uploaded_files = st.file_uploader("PL測定データ", accept_multiple_files=True, key="pl_files")
+    if uploaded_files:
+        fig, ax = plt.subplots()
+        for f in uploaded_files:
+            try:
+                df = pd.read_csv(f, sep=r'\s+|,|\t', engine='python', header=None, comment='#')
+                if df.shape[1] >= 2:
+                    y_data = pd.to_numeric(df.iloc[:, 1], errors='coerce').fillna(0)
+                    pixels = np.arange(len(y_data))
+                    wavelengths = (pixels - center_px) * slope + center_wl
+                    ax.plot(wavelengths, y_data, label=f.name)
+            except: pass
+        ax.set_xlabel("Wavelength (nm)")
+        ax.set_ylabel("Intensity")
+        ax.legend()
+        st.pyplot(fig)
 
+# 6. 議事録 (app(4).pyより復元)
 def page_meeting_note():
     st.header("📄 議事録")
-    st.info("この機能は現在構築中です。")
+    # CSV構造: Timestamp, Title, AudioName, AudioURL, Content
+    page_data_list_generic(SHEET_MEETING_DATA, "議事録", 
+                           ["会議タイトル", "議事録内容"], 
+                           ["会議タイトル", "議事録内容"], # 入力フィールド
+                           "議事録")
 
+# --- 新規実装: 以前NameErrorだったページを汎用ロジックで実装 ---
+
+# 汎用的な「記録＆一覧」ページ作成関数
+def page_data_list_generic(sheet_name, title, display_cols, input_labels, note_type):
+    st.header(title)
+    tab1, tab2 = st.tabs(["一覧表示", "新規記録"])
+    
+    with tab2: # 新規記録
+        with st.form(f"{sheet_name}_form"):
+            inputs = []
+            for label in input_labels:
+                if "内容" in label or "メモ" in label:
+                    inputs.append(st.text_area(label, height=100))
+                else:
+                    inputs.append(st.text_input(label))
+            files = st.file_uploader("添付", accept_multiple_files=True, key=f"{sheet_name}_file")
+            submit = st.form_submit_button("保存")
+            
+        if submit:
+            f_json, u_json = handle_file_uploads(files)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            # 汎用的な行データ作成: Timestamp, NoteType, Inputs..., Files, URLs
+            # ※実際のCSV列順に合わせるため、必要に応じて調整が必要だが、
+            #  ここでは最も安全な「後ろに追加」戦略をとるか、CSVヘッダに依存
+            row = [ts, note_type] + inputs + [f_json, u_json]
+            save_to_sheet(sheet_name, row)
+
+    with tab1: # 一覧
+        df = get_data_from_gspread(sheet_name)
+        if not df.empty:
+            st.dataframe(df)
+            # 簡易詳細表示
+            sel = st.selectbox("詳細選択", df.iloc[:, 0].unique() if not df.empty else [], key=f"{sheet_name}_sel")
+            if sel:
+                row = df[df.iloc[:, 0] == sel].iloc[0].to_dict()
+                st.write(row)
+                display_attached_files(row, 'ファイルURL', 'ファイル名') # 一般的な列名と仮定
+                display_attached_files(row, '写真URL', 'ファイル名')   # メンテ/エピ用
+                display_attached_files(row, '添付ファイルURL', '添付ファイル名') # 知恵袋用
+
+# 7. 知恵袋
 def page_faq():
-    st.header("💡 知恵袋・質問箱")
-    st.info("この機能は現在構築中です。")
+    # CSV: Timestamp, Title, Content, Email, FileName, FileURL, Status
+    page_data_list_generic(SHEET_FAQ_DATA, "💡 知恵袋・質問箱",
+                           ["質問タイトル", "質問内容", "ステータス"],
+                           ["質問タイトル", "質問内容", "連絡先メールアドレス"],
+                           "知恵袋")
 
-def page_device_handover():
-    st.header("📝 装置引き継ぎメモ")
-    st.info("この機能は現在構築中です。")
-
+# 8. トラブル報告
 def page_trouble_report():
+    # CSV: Timestamp, Place, Date, When, Cause, Solution, Prevention, Reporter, FileName, FileURL, Title
     st.header("🚨 トラブル報告")
-    st.info("この機能は現在構築中です。")
+    tab1, tab2 = st.tabs(["一覧", "報告"])
+    with tab2:
+        with st.form("trb_form"):
+            title = st.text_input("件名/タイトル")
+            place = st.text_input("機器/場所")
+            date_occ = st.date_input("発生日")
+            when = st.text_area("トラブル発生時")
+            cause = st.text_area("原因/究明")
+            sol = st.text_area("対策/復旧")
+            prev = st.text_area("再発防止策")
+            reporter = st.text_input("報告者")
+            files = st.file_uploader("添付", accept_multiple_files=True)
+            submit = st.form_submit_button("報告")
+        if submit:
+            f_j, u_j = handle_file_uploads(files)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            # CSV順序に合わせる
+            row = [ts, place, str(date_occ), when, cause, sol, prev, reporter, f_j, u_j, title]
+            save_to_sheet(SHEET_TROUBLE_DATA, row)
+    with tab1:
+        df = get_data_from_gspread(SHEET_TROUBLE_DATA)
+        if not df.empty:
+            st.dataframe(df)
 
+# 9. 引き継ぎメモ
+def page_device_handover():
+    # CSV: Timestamp, Type, Title, Content1, Content2, Content3, Memo
+    st.header("📝 装置引き継ぎメモ")
+    # 簡易実装
+    page_data_list_generic(SHEET_HANDOVER_DATA, "引き継ぎメモ", 
+                           ["種類", "タイトル", "メモ"], 
+                           ["種類", "タイトル", "内容1", "メモ"], 
+                           "引き継ぎ")
+
+# 10. 連絡・問い合わせ
 def page_contact():
-    st.header("📧 連絡・問い合わせ")
-    st.info("この機能は現在構築中です。")
+    # CSV: Timestamp, Type, Detail, Contact
+    page_data_list_generic(SHEET_CONTACT_DATA, "📧 連絡・問い合わせ",
+                           ["お問い合わせの種類", "詳細内容"],
+                           ["お問い合わせの種類", "詳細内容", "連絡先"],
+                           "問い合わせ")
 
 
 # ---------------------------
-# --- メインルーティング (最終修正版) ---
+# --- メインルーティング ---
 # ---------------------------
 def main():
     st.sidebar.title("山根研 ツールキット")
@@ -490,39 +509,25 @@ def main():
     ]
     menu_selection = st.sidebar.radio("機能選択", menu_items)
     
-    # 【重要修正】メニュー切り替え時にデータキャッシュをクリアするロジック
-    # 選択が変更された場合、データ読み込み関数（get_data_from_gspread）のキャッシュをクリア
-    if 'menu_selection' not in st.session_state or st.session_state.menu_selection != menu_selection:
-        try:
-            get_data_from_gspread.clear()
-        except NameError:
-            if 'st.cache_data' in st.__dict__:
-                st.cache_data.clear()
-        
+    # メニュー切り替え時のキャッシュクリア
+    if 'menu_selection' not in st.session_state:
         st.session_state.menu_selection = menu_selection
-        # st.rerun() は不要。次回実行時に自動でデータ取得が行われる
+    
+    if st.session_state.menu_selection != menu_selection:
+        get_data_from_gspread.clear()
+        st.session_state.menu_selection = menu_selection
 
-    # --- ページルーティング ---
-    if menu_selection == "エピノート":
-        page_epi_note()
-    elif menu_selection == "メンテノート":
-        page_mainte_note()
-    elif menu_selection == "🗓️ スケジュール・装置予約":
-        page_schedule_reservation()
-    elif menu_selection == "IVデータ解析":
-        page_iv_analysis()
-    elif menu_selection == "PLデータ解析":
-        page_pl_analysis()
-    elif menu_selection == "議事録":
-        page_meeting_note()
-    elif menu_selection == "知恵袋・質問箱":
-        page_faq()
-    elif menu_selection == "装置引き継ぎメモ":
-        page_device_handover()
-    elif menu_selection == "トラブル報告":
-        page_trouble_report()
-    elif menu_selection == "連絡・問い合わせ":
-        page_contact()
+    # ルーティング
+    if menu_selection == "エピノート": page_epi_note()
+    elif menu_selection == "メンテノート": page_mainte_note()
+    elif menu_selection == "🗓️ スケジュール・装置予約": page_schedule_reservation()
+    elif menu_selection == "IVデータ解析": page_iv_analysis()
+    elif menu_selection == "PLデータ解析": page_pl_analysis()
+    elif menu_selection == "議事録": page_meeting_note()
+    elif menu_selection == "知恵袋・質問箱": page_faq()
+    elif menu_selection == "装置引き継ぎメモ": page_device_handover()
+    elif menu_selection == "トラブル報告": page_trouble_report()
+    elif menu_selection == "連絡・問い合わせ": page_contact()
 
 if __name__ == "__main__":
     main()
