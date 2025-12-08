@@ -15,10 +15,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 from datetime import datetime, date, timedelta
 from urllib.parse import quote as url_quote, unquote as url_unquote
-from io import BytesIO
+from io import BytesIO # Excel出力に必須
 import calendar
 import matplotlib.font_manager as fm
-from functools import reduce
+from functools import reduce # 念のため残します
 
 # Google Services
 from google.oauth2 import service_account
@@ -118,7 +118,7 @@ class DummyStorageClient:
     def bucket(self, name): return self
     def blob(self, name): return self
     def list_blobs(self, **kwargs): return []
-    def generate_signed_url(self, **kwargs): return None # ダミーメソッドを追加
+    def generate_signed_url(self, **kwargs): return None
 
 # ---------------------------
 # --- Initialization ---
@@ -187,7 +187,6 @@ def generate_signed_url(blob_name_quoted, expiration_minutes=15):
     if isinstance(storage_client, DummyStorageClient): return None
     try:
         bucket = storage_client.bucket(CLOUD_STORAGE_BUCKET_NAME)
-        # blob_name_quoted は URLエンコードされた状態であることを想定
         blob = bucket.blob(blob_name_quoted)
         return blob.generate_signed_url(version="v4", expiration=timedelta(minutes=expiration_minutes), method="GET")
     except Exception:
@@ -204,21 +203,18 @@ def get_sheet_as_df(spreadsheet_name, sheet_name):
     except Exception:
         return pd.DataFrame()
 
-# --- 画像インライン表示に対応した関数 ---
 def display_attached_files(row, col_url, col_filename):
     raw_urls = row.get(col_url, '')
     raw_names = row.get(col_filename, '')
     urls = []
     names = []
     
-    # URLリストのパース
     try:
         urls = json.loads(raw_urls) if raw_urls else []
         if not isinstance(urls, list): urls = [raw_urls] if isinstance(raw_urls, str) else []
     except:
         if raw_urls and raw_urls.startswith('http'): urls = [raw_urls]
         
-    # ファイル名リストのパース
     try:
         names = json.loads(raw_names) if raw_names else []
         if not isinstance(names, list): names = [names] if isinstance(names, str) else []
@@ -233,10 +229,8 @@ def display_attached_files(row, col_url, col_filename):
         for u, n in zip(urls, names):
             is_image = n.lower().endswith(('.png', '.jpg', '.jpeg', '.gif'))
             
-            # GCSのblob名を取得 (URLからファイル名部分を抽出)
             blob_name_quoted = None
             if u.startswith(f"https://storage.googleapis.com/{CLOUD_STORAGE_BUCKET_NAME}/"):
-                # URLの末尾（ファイル名部分）を取得
                 blob_name_quoted = u.split(f"https://storage.googleapis.com/{CLOUD_STORAGE_BUCKET_NAME}/")[1]
 
             if is_image and blob_name_quoted:
@@ -249,7 +243,7 @@ def display_attached_files(row, col_url, col_filename):
             else:
                 st.markdown(f"- [{n}]({u})")
 
-# --- Excel Export Helper ---
+# --- Excel Export Helper (NameErrorの原因の可能性が高い関数) ---
 def to_excel(df):
     """DataFrameをExcelファイル形式のBytesIOに変換する"""
     output = BytesIO()
@@ -273,14 +267,12 @@ def load_data_file(uploaded_bytes, filename):
         df = pd.read_csv(io.StringIO("\n".join(data_lines)), sep=r'\s+|,|\t', engine='python', header=None)
         if df.shape[1] < 2: return None
         df = df.iloc[:, :2]
-        # IVの場合、X軸とファイル名で列名を確定
         df.columns = ['Axis_X', filename]
         df = df.apply(pd.to_numeric, errors='coerce').dropna()
         return df
     except:
         return None
 
-# --- PLデータ読み込み関数 (修正版) ---
 @st.cache_data
 def load_pl_data(uploaded_file):
     try:
@@ -378,19 +370,181 @@ def page_data_list(sheet_name, title, col_time, col_filter, col_memo, col_url, d
             display_attached_files(row, col_url, col_filename)
 
 # ---------------------------
-# --- Pages (省略) ---
+# --- Pages ---
 # ---------------------------
-# (page_epi_note_recording, page_epi_note, page_mainte_recording, page_mainte_note, 
-#  page_meeting_note, page_qa_box, page_handover_note, page_trouble_report, 
-#  page_contact_form は省略。これらは前回の修正版を使用)
+def page_epi_note_recording():
+    st.markdown("#### 📝 新しいエピノートを記録")
+    with st.form("epi_form"):
+        title = st.text_input("タイトル/番号 (例: 791)")
+        cat = st.selectbox("カテゴリ", ["D1", "D2", "その他"])
+        memo = st.text_area("メモ")
+        files = st.file_uploader("添付", accept_multiple_files=True)
+        if st.form_submit_button("保存"):
+            if not title:
+                st.error("タイトル必須")
+                return
+            
+            f_names, f_urls = [], []
+            if files:
+                for f in files:
+                    n, u = upload_file_to_gcs(storage_client, f)
+                    if u: f_names.append(n); f_urls.append(u)
+            
+            row = [
+                datetime.now().strftime("%Y%m%d_%H%M%S"),
+                "エピノート", cat, f"{title}\n{memo}",
+                json.dumps(f_names), json.dumps(f_urls)
+            ]
+            try:
+                gc.open(SPREADSHEET_NAME).worksheet(SHEET_EPI_DATA).append_row(row)
+                st.success("保存成功")
+                st.cache_data.clear()
+            except Exception as e:
+                st.error(f"エラー: {e}")
+
+def page_epi_note():
+    st.header("エピノート")
+    tab1, tab2 = st.tabs(["📝 記録", "📚 一覧"])
+    with tab1: page_epi_note_recording()
+    with tab2:
+        page_data_list(SHEET_EPI_DATA, "エピノート", EPI_COL_TIMESTAMP, EPI_COL_CATEGORY, EPI_COL_MEMO, EPI_COL_FILE_URL, 
+                       [EPI_COL_TIMESTAMP, EPI_COL_CATEGORY, EPI_COL_MEMO], EPI_COL_FILENAME)
+
+def page_mainte_recording():
+    st.markdown("#### 📝 新しいメンテノートを記録")
+    with st.form("mainte_form"):
+        dev = st.selectbox("装置", ["MBE", "XRD", "PL", "AFM", "その他"])
+        title = st.text_input("タイトル")
+        memo = st.text_area("詳細")
+        files = st.file_uploader("添付", accept_multiple_files=True)
+        if st.form_submit_button("保存"):
+            if not title: st.error("タイトル必須"); return
+            f_names, f_urls = [], []
+            if files:
+                for f in files:
+                    n, u = upload_file_to_gcs(storage_client, f)
+                    if u: f_names.append(n); f_urls.append(u)
+            row = [
+                datetime.now().strftime("%Y%m%d_%H%M%S"),
+                "メンテノート", f"[{title}] {dev}\n{memo}",
+                json.dumps(f_names), json.dumps(f_urls)
+            ]
+            try:
+                gc.open(SPREADSHEET_NAME).worksheet(SHEET_MAINTE_DATA).append_row(row)
+                st.success("保存成功")
+                st.cache_data.clear()
+            except Exception as e: st.error(f"エラー: {e}")
+
+def page_mainte_note():
+    st.header("メンテノート")
+    tab1, tab2 = st.tabs(["📝 記録", "📚 一覧"])
+    with tab1: page_mainte_recording()
+    with tab2:
+        page_data_list(SHEET_MAINTE_DATA, "メンテノート", MAINT_COL_TIMESTAMP, None, MAINT_COL_MEMO, MAINT_COL_FILE_URL,
+                       [MAINT_COL_TIMESTAMP, MAINT_COL_MEMO], MAINT_COL_FILENAME)
+
+def page_meeting_note():
+    st.header("議事録")
+    with st.form("meeting_form"):
+        title = st.text_input("会議タイトル")
+        content = st.text_area("内容")
+        url = st.text_input("音声URL")
+        if st.form_submit_button("保存"):
+            if not title: st.error("タイトル必須"); return
+            row = [datetime.now().strftime("%Y%m%d_%H%M%S"), title, "", url, content]
+            try:
+                gc.open(SPREADSHEET_NAME).worksheet(SHEET_MEETING_DATA).append_row(row)
+                st.success("保存成功")
+                st.cache_data.clear()
+            except Exception as e: st.error(f"エラー: {e}")
+    page_data_list(SHEET_MEETING_DATA, "議事録", MEETING_COL_TIMESTAMP, None, MEETING_COL_TITLE, MEETING_COL_AUDIO_URL,
+                   [MEETING_COL_TIMESTAMP, MEETING_COL_TITLE, MEETING_COL_CONTENT], None)
+
+def page_qa_box():
+    st.header("知恵袋")
+    with st.form("qa_form"):
+        title = st.text_input("質問タイトル")
+        content = st.text_area("内容")
+        contact = st.text_input("連絡先")
+        files = st.file_uploader("添付", accept_multiple_files=True)
+        if st.form_submit_button("送信"):
+            if not title: st.error("タイトル必須"); return
+            f_names, f_urls = [], []
+            if files:
+                for f in files:
+                    n, u = upload_file_to_gcs(storage_client, f)
+                    if u: f_names.append(n); f_urls.append(u)
+            row = [
+                datetime.now().strftime("%Y%m%d_%H%M%S"), title, content, contact,
+                json.dumps(f_names), json.dumps(f_urls), "未解決"
+            ]
+            try:
+                gc.open(SPREADSHEET_NAME).worksheet(SHEET_QA_DATA).append_row(row)
+                st.success("送信成功")
+                st.cache_data.clear()
+            except Exception as e: st.error(f"エラー: {e}")
+    page_data_list(SHEET_QA_DATA, "QA", QA_COL_TIMESTAMP, QA_COL_STATUS, QA_COL_TITLE, QA_COL_FILE_URL,
+                   [QA_COL_TIMESTAMP, QA_COL_TITLE, QA_COL_CONTENT, QA_COL_STATUS], QA_COL_FILENAME)
+
+def page_handover_note():
+    st.header("引き継ぎメモ")
+    with st.form("handover_form"):
+        htype = st.selectbox("種類", ["マニュアル", "装置設定", "その他"])
+        title = st.text_input("タイトル")
+        memo = st.text_area("内容")
+        if st.form_submit_button("保存"):
+            if not title: st.error("タイトル必須"); return
+            try:
+                gc.open(SPREADSHEET_NAME).worksheet(SHEET_HANDOVER_DATA).append_row([
+                    datetime.now().strftime("%Y%m%d_%H%M%S"), htype, title, memo
+                ])
+                st.success("保存成功")
+                st.cache_data.clear()
+            except Exception as e: st.error(f"エラー: {e}")
+    page_data_list(SHEET_HANDOVER_DATA, "引き継ぎ", HANDOVER_COL_TIMESTAMP, HANDOVER_COL_TYPE, HANDOVER_COL_TITLE, None,
+                   [HANDOVER_COL_TIMESTAMP, HANDOVER_COL_TYPE, HANDOVER_COL_TITLE, HANDOVER_COL_MEMO], None)
+
+def page_trouble_report():
+    st.header("トラブル報告")
+    with st.form("trouble_form"):
+        dev = st.selectbox("機器", ["MBE", "XRD", "PL", "IV", "TEM・SEM", "抵抗加熱蒸着", "RTA", "フォトリソ", "ドラフト", "その他"])
+        title = st.text_input("件名")
+        cause = st.text_area("原因")
+        sol = st.text_area("対策")
+        rep = st.text_input("報告者")
+        if st.form_submit_button("保存"):
+            try:
+                gc.open(SPREADSHEET_NAME).worksheet(SHEET_TROUBLE_DATA).append_row([
+                    datetime.now().strftime("%Y%m%d_%H%M%S"), dev, "", "", cause, sol, "", rep, "", "", title
+                ])
+                st.success("保存成功")
+                st.cache_data.clear()
+            except Exception as e: st.error(f"エラー: {e}")
+    page_data_list(SHEET_TROUBLE_DATA, "トラブル", TROUBLE_COL_TIMESTAMP, TROUBLE_COL_DEVICE, TROUBLE_COL_TITLE, None,
+                   [TROUBLE_COL_TIMESTAMP, TROUBLE_COL_DEVICE, TROUBLE_COL_TITLE, TROUBLE_COL_CAUSE, TROUBLE_COL_SOLUTION], None)
+
+def page_contact_form():
+    st.header("お問い合わせ")
+    with st.form("contact_form"):
+        ctype = st.selectbox("種類", ["バグ報告", "機能要望", "データ修正依頼", "その他"])
+        detail = st.text_area("詳細")
+        contact = st.text_input("連絡先")
+        if st.form_submit_button("送信"):
+            if not detail: st.error("詳細必須"); return
+            try:
+                gc.open(SPREADSHEET_NAME).worksheet(SHEET_CONTACT_DATA).append_row([
+                    datetime.now().strftime("%Y%m%d_%H%M%S"), ctype, detail, contact
+                ])
+                st.success("送信成功")
+                st.cache_data.clear()
+            except Exception as e: st.error(f"エラー: {e}")
 
 # ---------------------------
-# --- Analysis Pages (修正版) ---
+# --- Analysis Pages ---
 # ---------------------------
 def page_iv_analysis():
     st.header("⚡ IVデータ解析")
     
-    # --- 対数表示切り替えチェックボックス ---
     use_log_scale = st.checkbox("縦軸（電流）を対数表示にする", key="iv_log_scale")
     
     files = st.file_uploader("IVファイル(.txt)", accept_multiple_files=True)
@@ -404,7 +558,6 @@ def page_iv_analysis():
         for f in files:
             df = load_data_file(f.getvalue(), f.name)
             if df is not None:
-                # 対数表示の場合、電流値が負またはゼロのデータはプロットできないため、ここではそのまま保持
                 ax.plot(df['Axis_X'], df.iloc[:,1], label=f.name)
                 data_for_export.append(df)
                 has_plot = True
@@ -412,16 +565,12 @@ def page_iv_analysis():
         if has_plot:
             # --- 縦軸のスケール設定 ---
             if use_log_scale:
-                # 対数表示の場合、データが正である必要があるため、エラーを避けるために設定
                 ax.set_yscale('log')
                 st.warning("⚠️ 対数表示では、電流値がゼロまたは負の値のデータは表示されません。")
             else:
                 ax.set_yscale('linear')
             
             # --- プロットの整形 ---
-            # ゼロ線は、リニアスケールでのみ意味を持つため、Log Scaleの場合は省略または注意深く扱う必要があります。
-            # ただし、今回はX=0線のみ残し、Y=0線は対数スケールでは描画しないようにします。
-            
             if not use_log_scale:
                  ax.axhline(0, color='gray', linestyle='--', linewidth=1) # Y=0 (電流ゼロ)
             
@@ -433,7 +582,7 @@ def page_iv_analysis():
             ax.grid(True, linestyle=':', alpha=0.5)
             st.pyplot(fig)
             
-            # --- Excel ダウンロード (変更なし) ---
+            # --- Excel ダウンロード ---
             st.markdown("---")
             st.subheader("📥 解析結果のエクセル出力")
             
@@ -456,6 +605,7 @@ def page_iv_analysis():
                 )
         else:
             st.warning("プロットできるデータがありませんでした。ファイル形式を確認してください。")
+
 def page_pl_analysis():
     st.header("PLデータ解析")
     if 'pl_slope' not in st.session_state: st.session_state['pl_slope'] = None
@@ -484,7 +634,6 @@ def page_pl_analysis():
                 p2 = df2.loc[df2['intensity'].idxmax(), 'pixel']
                 
                 if p1 != p2:
-                    # 校正係数を計算し、絶対値をとる
                     slope_raw = (wl2 - wl1) / (p2 - p1)
                     slope = np.abs(slope_raw)
                     
@@ -539,23 +688,18 @@ def page_pl_analysis():
         if files:
             fig, ax = plt.subplots(figsize=(10, 6))
             has_plot = False
-            # Excel出力用にデータフレームを格納するリスト
             data_for_export = []
 
             for f in files:
                 df = load_pl_data(f)
                 if df is not None and not df.empty:
-                    # 波長変換
                     df['wl'] = (df['pixel'] - 256.5) * slope + cw
                     
-                    # プロット
                     ax.plot(df['wl'], df['intensity'], label=f.name)
                     has_plot = True
                     
-                    # Excel出力用のDataFrameを作成: 波長と強度
                     export_df = df[['wl', 'intensity']].copy()
                     
-                    # 列名をファイル名で明確化
                     wl_col_name = f"Wavelength ({f.name})"
                     int_col_name = f"Intensity ({f.name})"
                     export_df.columns = [wl_col_name, int_col_name]
@@ -574,10 +718,8 @@ def page_pl_analysis():
                 st.markdown("---")
                 st.subheader("📥 解析結果のエクセル出力")
                 
-                # データ統合 (列を結合)
                 merged_df = pd.concat(data_for_export, axis=1)
 
-                # ファイル名入力
                 default_name = datetime.now().strftime("PL_Analysis_%Y%m%d")
                 filename_input = st.text_input("ファイル名 (.xlsx)", value=default_name, key="pl_filename")
                 
@@ -594,7 +736,7 @@ def page_pl_analysis():
                 st.warning("プロットできるデータがありませんでした。ファイル形式を確認してください。")
 
 # ---------------------------
-# --- Calendar (省略) ---
+# --- Calendar ---
 # ---------------------------
 def page_calendar():
     st.header("🗓️ スケジュール・装置予約")
@@ -685,4 +827,3 @@ if __name__ == "__main__":
         pass
         
     main()
-
