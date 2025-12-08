@@ -967,51 +967,69 @@ def page_contact_form():
 # --- IVデータ解析ページ ---
 # ---------------------------
 def page_iv_analysis():
-    # ... (初期設定、アップロード処理などは省略)
+    st.title("⚡ IVデータ解析")
+    st.markdown("IV測定データファイル（2列データ：X軸/Y軸）をアップロードし、往路/復路の特性をプロットします。")
 
-    # データの読み込み
-    data_frames = {}
-    file_names = []
-    for uploaded_file in uploaded_files:
-        df = load_data_file(uploaded_file, uploaded_file.name)
-        if df is not None:
-            data_frames[uploaded_file.name] = df
-            file_names.append(uploaded_file.name)
+    # --- 【NameError解消の修正】: ファイルアップローダーを定義し、戻り値を 'uploaded_files' に格納 ---
+    uploaded_files = st.file_uploader(
+        "IV測定データファイル (CSV/TXT形式) を選択してください",
+        type=["csv", "txt"],
+        accept_multiple_files=True
+    )
+    # -----------------------------------------------------------------------------------------
 
-    if data_frames:
+    if uploaded_files:
         st.subheader("IV測定データ 解析")
         
+        data_frames = {}
+        file_names = []
+        
+        # データの読み込み
+        for uploaded_file in uploaded_files:
+            # データの読み込みには load_data_file を使用 (2列データ用)
+            # load_data_fileは app (4).py 内に定義されている前提
+            df = load_data_file(uploaded_file, uploaded_file.name)
+            if df is not None:
+                data_frames[uploaded_file.name] = df
+                file_names.append(uploaded_file.name)
+            else:
+                st.warning(f"{uploaded_file.name} の読み込みに失敗したか、データが不正です。")
+
+        if not data_frames:
+            st.error("アップロードされたファイルから有効なデータが読み取れませんでした。")
+            return
+
         # --- データプロット (往路/復路) ---
-        # 結合処理は行わず、個々のデータフレームをプロット
+        # 結合処理は行わず、個々のデータフレームを往路/復路に分けてプロットします。
+        fig, ax = plt.subplots(figsize=(10, 6))
         
-        fig, ax = plt.subplots()
-        
-        # X軸とY軸の選択（元のコードに基づき、1列目と2列目）
+        # X軸とY軸の列名を取得
         x_col = data_frames[file_names[0]].columns[0]
         y_col = data_frames[file_names[0]].columns[1]
         
         for name, df in data_frames.items():
-            # **【核心の修正】往路/復路に分割してプロット**
-            
-            # データの分割点を特定: X軸（1列目）の最大値のインデックス
-            # 通常、IV測定は 負のV → 正のV → 負のV と動くため、Xが最大になる点が折り返し点
             
             # X軸データ
             x_data = df.iloc[:, 0] 
             
-            # X軸の最大値を持つインデックス
-            max_index = x_data.idxmax()
+            # X軸の最大値を持つインデックス (折り返し点) を特定
+            # IV測定は通常、X軸が最大になる点が折り返し点
+            if not x_data.empty:
+                max_index = x_data.idxmax()
+            else:
+                continue
 
             # 往路 (Forward: データの最初から最大値まで)
             df_forward = df.iloc[:max_index + 1]
-            ax.plot(df_forward.iloc[:, 0], df_forward.iloc[:, 1], 
-                    label=f"{name} (Forward)", linestyle='-', marker='o', markersize=3)
+            if not df_forward.empty:
+                ax.plot(df_forward.iloc[:, 0], df_forward.iloc[:, 1], 
+                        label=f"{name} (Forward)", linestyle='-', marker='o', markersize=3, alpha=0.7)
 
             # 復路 (Reverse: 最大値の次から最後まで)
             df_reverse = df.iloc[max_index + 1:]
             if not df_reverse.empty:
                 ax.plot(df_reverse.iloc[:, 0], df_reverse.iloc[:, 1], 
-                        label=f"{name} (Reverse)", linestyle='--', marker='x', markersize=3)
+                        label=f"{name} (Reverse)", linestyle='--', marker='x', markersize=3, alpha=0.7)
         
         # グラフの装飾
         ax.set_xlabel(x_col)
@@ -1019,17 +1037,18 @@ def page_iv_analysis():
         ax.set_title("IV Characteristic (Forward/Reverse)")
         ax.legend()
         ax.grid(True)
-        st.pyplot(fig)
         
-        # ... (データフレーム表示などは削除)
-        # 結合データはプロットしないため、以下の部分は削除またはコメントアウト
-        # if combined_df is not None:
-        #     st.subheader("結合データ")
-        #     st.dataframe(combined_df)
-    else:
-        st.info("ファイルをアップロードしてください。")
+        # Streamlitにプロットを表示
+        st.pyplot(fig)
+        plt.close(fig) # メモリ解放
 
-# 補足: 往路/復路の分割ロジックは、X軸が単調増加し、最大値で折り返すという一般的なIV測定のシーケンスに基づいています。
+        # 個別のデータフレームの表示オプション
+        if st.checkbox("個別のデータフレームを表示"):
+            for name, df in data_frames.items():
+                st.write(f"--- {name} ---")
+                st.dataframe(df)
+    else:
+        st.info("IV測定データファイルをアップロードしてください。")
 
 # ---------------------------
 # --- PLデータ解析ページ ---
@@ -1417,6 +1436,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
