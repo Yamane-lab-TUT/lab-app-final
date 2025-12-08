@@ -653,21 +653,16 @@ def page_data_list(sheet_name, title, col_time, col_filter=None, col_memo=None, 
             st.markdown("##### 添付ファイル")
             display_attached_files(row, col_url, col_filename)
 # ---------------------------
-# --- エピノートページ ---
+# --- エピノート記録ページ ---
 # ---------------------------
-# app (4).py: 約842行目から
 def page_epi_note_recording():
     st.markdown("#### 📝 新しいエピノートを記録")
     
-    # st.formの処理は、入力フィールドとボタンを内包
     with st.form(key='epi_note_form'):
         
-        # ユーザー入力フィールド
         ep_title = st.text_input("タイトル/番号 (例: 791)", key="epi_title")
-        
-        # 【設定復元】カテゴリを D1 / D2 などに戻す
+        # カテゴリを D1 / D2 などに復元
         ep_category = st.selectbox("カテゴリ", ["D1", "D2", "その他"], key="epi_category") 
-        
         ep_memo = st.text_area("詳細メモ", height=200, key="epi_memo")
         
         uploaded_files = st.file_uploader(
@@ -679,17 +674,13 @@ def page_epi_note_recording():
         
         st.markdown("---")
         
-        # データのインポート expaneder (インデントエラーの発生源)
+        # インデントエラー対策
         with st.expander("データのインポート"):
-            # インデントエラー回避のため pass を挿入
             pass  
             
-        # フォーム送信ボタン
         submit_button = st.form_submit_button("記録を保存") 
         
-    # フォームの処理
     if submit_button:
-        # datetime, json はグローバルに定義されていると仮定
         from datetime import datetime
         import json
         
@@ -701,7 +692,7 @@ def page_epi_note_recording():
         if uploaded_files:
             with st.spinner("ファイルをGCSにアップロード中..."):
                 for file_obj in uploaded_files:
-                    # 【修正済み】フォルダ名引数を削除し、GCSルートに保存
+                    # 【GCSエラー解消】: storage_client, file_obj の順で引数を渡し、GCSルートに保存
                     filename, url = upload_file_to_gcs(storage_client, file_obj) 
                     
                     if url:
@@ -709,25 +700,24 @@ def page_epi_note_recording():
                         urls_list.append(url)
                     else:
                         st.error(f"ファイル {file_obj.name} のアップロードに失敗しました。")
+                        return
 
         filenames_json = json.dumps(filenames_list)
         urls_json = json.dumps(urls_list)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         memo_content = f"{ep_title}\n{ep_memo}"
         
-        # 定数 (EPI_COL_NOTE_TYPE, SHEET_EPI_DATA, SPREADSHEET_NAME) はグローバルに定義されていると仮定
-        EPI_COL_NOTE_TYPE = "エピノート" # 仮の定数
-        SHEET_EPI_DATA = "エピノート"   # 仮の定数
+        EPI_COL_NOTE_TYPE = "エピノート" 
+        SHEET_EPI_DATA = "エピノート"   
         
+        # 【6列構成】: タイムスタンプ, ノート種別, カテゴリ, メモ, ファイル名, 写真URL
         row_data = [timestamp, EPI_COL_NOTE_TYPE, ep_category, memo_content, filenames_json, urls_json]
         
         try:
-            # gc は authenticate_gspread() で取得したグローバル変数と仮定
             worksheet = gc.open(SPREADSHEET_NAME).worksheet(SHEET_EPI_DATA)
             worksheet.append_row(row_data)
             st.success("✅ エピノートをアップロードしました！")
             
-            # キャッシュクリアとリラン
             if 'st.cache_data' in st.__dict__:
                 st.cache_data.clear()
             st.rerun()
@@ -768,13 +758,11 @@ def page_epi_note():
 def page_mainte_recording():
     st.markdown("#### 🛠️ 新しいメンテノートを記録")
     
-    # フォーム全体
     with st.form(key='mainte_note_form'):
         
-        # ユーザー入力フィールド
         mainte_title = st.text_input("メンテタイトル (例: プローブ調整)", key="mainte_title")
         
-        # 【設定復元】装置選択肢を一般的なものに戻す (元の設定がこれと異なる場合は調整が必要です)
+        # 装置選択肢を一般的なものに復元
         mainte_device = st.selectbox("対象装置", ["MOCVD", "IV/PL", "その他"], key="mainte_device") 
         
         memo_content = st.text_area("作業詳細メモ", height=200, key="mainte_memo")
@@ -788,17 +776,13 @@ def page_mainte_recording():
         
         st.markdown("---")
         
-        # データのインポート expaneder (インデントエラーの発生源)
+        # インデントエラー対策
         with st.expander("データのインポート"):
-            # インデントエラー回避のため pass を挿入
             pass
             
-        # フォーム送信ボタン
         submit_button = st.form_submit_button("記録を保存")
         
-    # フォームの処理
     if submit_button:
-        # datetime, json はグローバルに定義されていると仮定
         from datetime import datetime
         import json
 
@@ -810,7 +794,7 @@ def page_mainte_recording():
         if uploaded_files:
             with st.spinner("ファイルをGCSにアップロード中..."):
                 for file_obj in uploaded_files:
-                    # 【修正済み】フォルダ名引数を削除し、GCSルートに保存
+                    # 【GCSエラー解消】: storage_client, file_obj の順で引数を渡し、GCSルートに保存
                     filename, url = upload_file_to_gcs(storage_client, file_obj)
                     
                     if url:
@@ -818,25 +802,26 @@ def page_mainte_recording():
                         urls_list.append(url)
                     else:
                         st.error(f"ファイル {file_obj.name} のアップロードに失敗しました。")
-        
+                        return
+
         filenames_json = json.dumps(filenames_list)
         urls_json = json.dumps(urls_list)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        memo_to_save = f"[{mainte_title}]\n{memo_content}"
         
-        # 定数 (MAINTE_COL_NOTE_TYPE, SHEET_MAINTE_DATA, SPREADSHEET_NAME) はグローバルに定義されていると仮定
-        MAINTE_COL_NOTE_TYPE = "メンテノート" # 仮の定数
-        SHEET_MAINTE_DATA = "メンテノート"   # 仮の定数
+        # 【5列構成に合わせるため】: 装置情報はメモに統合し、独立した列としては書き込まない
+        memo_to_save = f"[{mainte_title}] (対象装置: {mainte_device})\n{memo_content}"
         
-        row_data = [timestamp, MAINTE_COL_NOTE_TYPE, mainte_device, memo_to_save, filenames_json, urls_json]
+        MAINTE_COL_NOTE_TYPE = "メンテノート" 
+        SHEET_MAINTE_DATA = "メンテノート"   
+        
+        # 【5列構成】: タイムスタンプ, ノート種別, メモ, ファイル名, 写真URL
+        row_data = [timestamp, MAINTE_COL_NOTE_TYPE, memo_to_save, filenames_json, urls_json]
         
         try:
-            # gc は authenticate_gspread() で取得したグローバル変数と仮定
             worksheet = gc.open(SPREADSHEET_NAME).worksheet(SHEET_MAINTE_DATA)
             worksheet.append_row(row_data)
             st.success("✅ メンテノートをアップロードしました！")
             
-            # キャッシュクリアとリラン
             if 'st.cache_data' in st.__dict__:
                 st.cache_data.clear()
             st.rerun()
@@ -1615,6 +1600,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
