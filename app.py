@@ -244,15 +244,35 @@ def display_attached_files(row, col_url, col_filename):
                 st.markdown(f"- [{n}]({u})")
 
 # --- Excel Export Helper (NameErrorの原因の可能性が高い関数) ---
+# --- Excel Export Helper (単一シート出力用) ---
 def to_excel(df):
-    """DataFrameをExcelファイル形式のBytesIOに変換する"""
+    """DataFrameをExcelファイル形式のBytesIOに変換する (単一シート出力用)"""
     output = BytesIO()
+    
+    # ★ 必須: 型変換と列名変更をここで実施 (IV、PL、その他で共通のエラー対策)
+    df = df.apply(pd.to_numeric, errors='coerce').astype(float)
+    if 'Axis_X' in df.columns:
+        df.rename(columns={'Axis_X': 'Voltage_V'}, inplace=True)
+    
     # 'xlsxwriter' エンジンを使用し、互換性を確保
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Analyzed Data')
+        df.to_excel(writer, index=False, sheet_name='Combined IV Data') # シート名を固定
     processed_data = output.getvalue()
     return processed_data
 
+# --- Excel Export Helper for Multiple Sheets ---
+def to_excel_multi_sheet(data_dict):
+    """ファイル名とDataFrameの辞書を受け取り、Excelファイル形式のBytesIOに変換する"""
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        for sheet_name, df in data_dict.items():
+            # 型変換と列名変更
+            export_df = df.apply(pd.to_numeric, errors='coerce').astype(float)
+            if 'Axis_X' in export_df.columns:
+                 export_df.rename(columns={'Axis_X': 'Voltage_V'}, inplace=True)
+            export_df.to_excel(writer, index=False, sheet_name=sheet_name)
+    processed_data = output.getvalue()
+    return processed_data
 # ---------------------------
 # --- Data Loaders ---
 # ---------------------------
@@ -542,14 +562,12 @@ def page_contact_form():
 # ---------------------------
 # --- Analysis Pages ---
 # ---------------------------
-from functools import reduce # reduceを使うため、ファイルの先頭でインポートされていることを確認
-
-from functools import reduce # reduceを使うため、ファイルの先頭でインポートされていることを確認
+from functools import reduce 
+import numpy as np # np.iscloseを使用するため
 
 def page_iv_analysis():
     st.header("⚡ IVデータ解析")
     
-    # 縦軸対数表示切り替えチェックボックス
     use_log_scale = st.checkbox("縦軸（電流）を対数表示にする", key="iv_log_scale")
     
     files = st.file_uploader("IVファイル(.txt)", accept_multiple_files=True)
@@ -563,8 +581,10 @@ def page_iv_analysis():
             has_plot = False
             
             for f in files:
+                # データのロード
                 df = load_data_file(f.getvalue(), f.name)
-                if df is not None:
+                
+                if df is not None and not df.empty:
                     data_for_export.append(df) # Excel用にオリジナルデータを保持
                     
                     # --- ログ表示のための処理: 絶対値化 ---
@@ -592,9 +612,9 @@ def page_iv_analysis():
             
             # --- プロットの整形 ---
             if not use_log_scale:
-                 ax.axhline(0, color='gray', linestyle='--', linewidth=1) # Y=0 (電流ゼロ)
+                 ax.axhline(0, color='gray', linestyle='--', linewidth=1) 
             
-            ax.axvline(0, color='gray', linestyle='--', linewidth=1) # X=0 (電圧ゼロ)
+            ax.axvline(0, color='gray', linestyle='--', linewidth=1)
             
             ax.set_xlabel("Voltage")
             ax.set_ylabel("Current")
@@ -604,27 +624,74 @@ def page_iv_analysis():
             
             # --- Excel ダウンロード ---
             st.markdown("---")
-            st.subheader("📥 解析結果のエクセル出力 (1シート結合)")
-            st.info("⚠️ 1枚シートに共通の電圧軸で結合するため、**元の測定順序（行きと帰り）は失われ、電圧順に整理**されます。")
+            st.subheader("📥 解析結果のエクセル出力")
             
             if data_for_export:
-                with st.spinner("Excel出力用にデータを統合中..."):
-                    # 1. データ統合: reduceを使って、全てのDataFrameを'Axis_X'を基準に外部結合 (Outer Merge)
-                    merged_df = reduce(lambda left, right: pd.merge(left, right, on='Axis_X', how='outer'), data_for_export)
+                
+                # --- Step 1: X軸の同一性チェック ---
+                is_consistent = False
+                if len(data_for_export) > 0:
+                    ref_df = data_for_export[0]
+                    # 電圧軸の最小点、最大点、データ点数が全て同じかをチェック
+                    ref_x_vals = ref_df['Axis_X'].to_numpy()
+                    ref_min = ref_x_vals.min()
+                    ref_max = ref_x_vals.max()
+                    ref_len = len(ref_x_vals)
                     
-                    # 2. Excel ValueError対策 (強化): 全ての列をfloat型に強制変換
-                    # これが以前のValueErrorを解決するコアな処理です。
-                    merged_df = merged_df.apply(pd.to_numeric, errors='coerce').astype(float)
-                    
-                    # 3. ユーザーの添付ファイルに合わせ、X軸の列名を 'Voltage_V' に変更
-                    merged_df.rename(columns={'Axis_X': 'Voltage_V'}, inplace=True)
+                    all_match = True
+                    # 2つ目以降のファイルと比較
+                    for df in data_for_export[1:]:
+                        df_x_vals = df['Axis_X'].to_numpy()
+                        # np.iscloseは浮動小数点数の比較に使用
+                        if not (
+                            np.isclose(df_x_vals.min(), ref_min) and
+                            np.isclose(df_x_vals.max(), ref_max) and
+                            len(df_x_vals) == ref_len
+                        ):
+                            all_match = False
+                            break
+                    is_consistent = all_match
 
+                
+                if is_consistent and len(data_for_export) > 1:
+                    # Case A: X軸が一致 -> 測定順序を保持し、1枚のシートに結合
+                    st.success("✅ 全てのファイルの電圧軸が一致するため、**測定順序を保持**したまま1枚のシートに統合します。")
+                    with st.spinner("Excel出力用にデータを統合中 (順序保持)..."):
+                        
+                        # 最初のファイルの電圧軸を使用し、以降のファイルの電流値のみを結合する
+                        # df.columns[1]は電流値の列名
+                        dfs_to_concat = [data_for_export[0]]
+                        for df in data_for_export[1:]:
+                            current_name = df.columns[1] 
+                            dfs_to_concat.append(df[[current_name]])
+                            
+                        # 行のインデックスに基づいて水平に結合 (測定順序を保持)
+                        merged_df = pd.concat(dfs_to_concat, axis=1)
+
+                        # to_excel (単一シート出力) を使用。型変換・列名変更はto_excel内で処理される。
+                        excel_data = to_excel(merged_df) 
+                    
+                else:
+                    # Case B: X軸が不一致、またはファイルが1つだけの場合 -> ファイルごとにシートを分けて出力
+                    
+                    data_for_export_dict = {}
+                    with st.spinner("Excel出力用にデータを準備中 (シート分割)..."):
+                        for df in data_for_export:
+                            # to_excel_multi_sheet が内部で型変換と列名変更を行う
+                            # シート名はファイル名を使用
+                            sheet_name = df.columns[1].replace('.txt', '')
+                            data_for_export_dict[sheet_name] = df
+                    
+                    if len(data_for_export) > 1:
+                        st.warning("⚠️ 電圧軸の範囲やステップが異なるため、ファイルごとにシートを分けて出力します。")
+                        excel_data = to_excel_multi_sheet(data_for_export_dict)
+                    else:
+                         st.info("ファイルが1つだけのため、1枚のシートに出力します。")
+                         excel_data = to_excel(data_for_export[0])
+                
                 
                 default_name = datetime.now().strftime("IV_Analysis_%Y%m%d")
                 filename_input = st.text_input("ファイル名 (.xlsx)", value=default_name, key="iv_filename")
-                
-                # 単一DataFrameをto_excelに渡す
-                excel_data = to_excel(merged_df)
                 
                 st.download_button(
                     label="Excelファイルとしてダウンロード",
@@ -857,6 +924,7 @@ if __name__ == "__main__":
         pass
         
     main()
+
 
 
 
