@@ -356,101 +356,66 @@ def combine_dataframes(dataframes, filenames, num_points=500):
     return combined_df
 
 # ---------------------------
-# --- 添付ファイル表示ユーティリティ ---
+# --- 添付ファイル表示ユーティリティ (修正版) ---
 # ---------------------------
 def display_attached_files(row_dict, col_url_key, col_filename_key):
     """
     指定された行データから添付ファイル（URLとファイル名）を抽出し、リンクとして表示する。
+    古いJSON形式でないURL、新しいJSON形式のURLの両方に対応。
     """
+    import json
+    import re
+    
+    urls = []
+    filenames = []
+    
+    # 1. URLデータを取得
+    raw_urls = row_dict.get(col_url_key, '[]')
+    
+    # 2. JSON形式のデコードを試みる（新しいデータまたは古いJSON形式データに対応）
     try:
-        urls = json.loads(row_dict.get(col_url_key, '[]'))
-        filenames = json.loads(row_dict.get(col_filename_key, '[]'))
-    except (json.JSONDecodeError, AttributeError):
-        urls = []
-        filenames = []
+        # JSONとして読み込みを試みる
+        parsed_urls = json.loads(raw_urls)
+        # JSONリストがネストされている場合や、単純なリストでない場合を考慮
+        urls = [url for url in parsed_urls if isinstance(url, str) and url.startswith('http')]
+        
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        # JSONデコードに失敗した場合（古いデータや単一のURL文字列の場合）
+        
+        # 3. 古いデータ形式や単一URLとして処理（文字列からURLを抽出）
+        url_match = re.search(r'https?://[^\s,"]+', raw_urls)
+        if url_match:
+            urls = [url_match.group(0)]
+        else:
+            urls = []
+    
+    # 4. ファイル名の取得
+    raw_filenames = row_dict.get(col_filename_key, '[]')
+    try:
+        # ファイル名はJSONとして読み込む（新しいデータ形式）
+        filenames = json.loads(raw_filenames)
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        # ファイル名がJSONでない場合（古いデータ形式）は、URLと対になるように空にするか、メモから抽出を試みる
+        filenames = [f"添付ファイル {i+1}" for i in range(len(urls))]
 
+
+    # 5. 表示処理
     if urls:
         st.markdown("##### 📎 添付ファイル")
+        
+        # ファイル名リストとURLリストの長さを調整
+        if len(filenames) < len(urls):
+            # ファイル名がURLより少ない場合は、足りない分を補完
+            filenames += [f"ファイル {i+1}" for i in range(len(filenames), len(urls))]
+        elif len(filenames) > len(urls):
+            # URLがファイル名より少ない場合は、ファイル名をURLの長さに合わせる
+            filenames = filenames[:len(urls)]
+            
         for url, filename in zip(urls, filenames):
-            # 非公開ファイルの場合、署名付きURLが必要なケースがあるため、
-            # 閲覧できない場合は、URLをそのまま表示する方が安全
+            # 認証されたURL（非公開ファイルの場合）または公開URLを表示
             st.markdown(f"[{filename}]({url})")
     else:
         st.markdown("添付ファイルはありません。")
-        
-# ---------------------------
-# --- 署名付きURL生成ユーティリティ ---
-# ---------------------------
-def generate_signed_url(gcs_path, expiration_minutes=60):
-    """
-    非公開GCSオブジェクトに対して、有効期限付きの署名付きURLを生成する。
-    """
-    if isinstance(storage_client, DummyStorageClient) or storage is None:
-        return None
-
-    try:
-        bucket_name = CLOUD_STORAGE_BUCKET_NAME
-        blob_name = gcs_path
-        
-        # 署名付きURLを生成
-        bucket = storage_client.bucket(bucket_name)
-        blob = bucket.blob(blob_name)
-        
-        # サービスアカウントを使用して署名
-        signed_url = blob.generate_signed_url(
-            version="v4",
-            # 有効期限: 60分
-            expiration=timedelta(minutes=expiration_minutes), 
-            method="GET"
-        )
-        return signed_url
-    except Exception as e:
-        st.error(f"署名付きURLの生成中にエラーが発生しました: {e}")
-        return None
-        
-# ---------------------------
-# --- GCS アップロードユーティリティ ---
-# ---------------------------
-# 【重要】引数を (storage_client_obj, file_obj) の2つに修正しています
-def upload_file_to_gcs(storage_client_obj, file_obj): 
-    """
-    StreamlitのアップロードファイルをGCSのルートに保存し、公開URLを返す。
-    """
-    # 必要なモジュールはファイル上部でインポートされている前提
-    from datetime import datetime
-    from urllib.parse import quote as url_quote
-    
-    # storage はファイル上部でインポートされていると仮定
-    if storage_client_obj is None or storage is None:
-        # GCSクライアントが認証されていない場合は None を返す
-        return None, None
-
-    try:
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        
-        # file_obj は Streamlit UploadedFile であり、.name 属性を持つ
-        original_filename = file_obj.name
-        safe_filename = original_filename.replace(' ', '_').replace('/', '_')
-        # フォルダ分けをせず、常にGCSのルートに保存
-        gcs_filename = f"{timestamp}_{safe_filename}"
-
-        # CLOUD_STORAGE_BUCKET_NAME はグローバルに定義されていると仮定
-        bucket = storage_client_obj.bucket(CLOUD_STORAGE_BUCKET_NAME)
-        blob = bucket.blob(gcs_filename)
-
-        # ファイルをメモリからアップロード
-        file_bytes = file_obj.getvalue()
-        blob.upload_from_string(file_bytes, content_type=file_obj.type if hasattr(file_obj, 'type') else 'application/octet-stream')
-
-        # 非公開のまま、認証済みアクセスが可能な公開URLを生成
-        public_url = f"https://storage.googleapis.com/{CLOUD_STORAGE_BUCKET_NAME}/{url_quote(gcs_filename)}"
-        return original_filename, public_url
-        
-    except Exception as e:
-        # このエラーは発生源が GCS クライアントではないため、詳細なエラーを返す
-        st.error(f"GCSへのアップロード中にエラーが発生しました: {e}")
-        return None, None
-
 # ---------------------------
 # --- GCS ファイルリスト取得ユーティリティ ---
 # ---------------------------
@@ -1608,6 +1573,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
