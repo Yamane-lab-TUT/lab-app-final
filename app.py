@@ -249,27 +249,22 @@ def to_excel(df):
     """DataFrameをExcelファイル形式のBytesIOに変換する (単一シート出力用)"""
     output = BytesIO()
     
-    # ★ 必須: 型変換と列名変更をここで実施 (IV、PL、その他で共通のエラー対策)
+    # ★ 必須: 型変換のみを実行。列名変更は各解析ページで行う。
     df = df.apply(pd.to_numeric, errors='coerce').astype(float)
-    if 'Axis_X' in df.columns:
-        df.rename(columns={'Axis_X': 'Voltage_V'}, inplace=True)
     
-    # 'xlsxwriter' エンジンを使用し、互換性を確保
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Combined IV Data') # シート名を固定
+        df.to_excel(writer, index=False, sheet_name='Combined Data') 
     processed_data = output.getvalue()
     return processed_data
 
-# --- Excel Export Helper for Multiple Sheets ---
+# --- Excel Export Helper for Multiple Sheets (型変換のみ) ---
 def to_excel_multi_sheet(data_dict):
     """ファイル名とDataFrameの辞書を受け取り、Excelファイル形式のBytesIOに変換する"""
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         for sheet_name, df in data_dict.items():
-            # 型変換と列名変更
+            # 型変換のみを実行。列名変更は各解析ページで行う。
             export_df = df.apply(pd.to_numeric, errors='coerce').astype(float)
-            if 'Axis_X' in export_df.columns:
-                 export_df.rename(columns={'Axis_X': 'Voltage_V'}, inplace=True)
             export_df.to_excel(writer, index=False, sheet_name=sheet_name)
     processed_data = output.getvalue()
     return processed_data
@@ -708,67 +703,147 @@ from functools import reduce # reduceを使うため
 def page_pl_analysis():
     st.header("💡 PLデータ解析")
     
-    files = st.file_uploader("PLファイル(.txt)", accept_multiple_files=True, key="pl_uploader")
+    # セッションステートの初期化
+    if 'pl_slope' not in st.session_state: st.session_state['pl_slope'] = None
+    if 'pl_center_wl' not in st.session_state: st.session_state['pl_center_wl'] = 1700
+
+    # =========================================================
+    # Step 1: 波長校正 
+    # =========================================================
+    st.markdown("## 1️⃣ Step 1: 波長校正")
+    st.info("2つの既知の波長ピークを持つデータをアップロードし、校正係数を決定します。")
     
-    data_for_export = [] # Excel出力用のオリジナルデータ
-    dfs_to_plot = []
+    c1, c2 = st.columns(2)
+    wl1 = c1.number_input("既知波長1 (nm)", value=1500.0, key="wl1_input")
+    wl2 = c2.number_input("既知波長2 (nm)", value=1570.0, key="wl2_input")
     
-    if files:
-        with st.spinner("ファイルを読み込み、グラフを準備中..."):
-            fig, ax = plt.subplots(figsize=(8, 6))
-            has_plot = False
-            
-            for f in files:
-                # load_data_fileはIV/PL共通で利用できる（1列目: X軸、2列目: Y軸）
-                df = load_data_file(f.getvalue(), f.name) 
+    f1 = c1.file_uploader("波長1データファイル", key="c1")
+    f2 = c2.file_uploader("波長2データファイル", key="c2")
+    
+    # load_pl_dataはファイル内容をDataFrameに変換する関数（元のコードベースに存在すると仮定）
+    if f1 and f2:
+        df1 = load_pl_data(f1)
+        df2 = load_pl_data(f2)
+        
+        if df1 is not None and not df1.empty and df2 is not None and not df2.empty:
+            try:
+                # ピクセル位置を検出 (intensityの最大値のインデックスからpixelを取得)
+                p1 = df1.loc[df1['intensity'].idxmax(), 'pixel']
+                p2 = df2.loc[df2['intensity'].idxmax(), 'pixel']
                 
-                if df is not None and not df.empty:
-                    data_for_export.append(df) 
-                    dfs_to_plot.append(df) # そのままプロットに使用
-                    has_plot = True
-
-            # --- プロットループ ---
-            for plot_df in dfs_to_plot:
-                # 1列目: 波長 (Axis_X), 2列目: 光強度
-                ax.plot(plot_df['Axis_X'], plot_df.iloc[:,1], label=plot_df.columns[1])
-
-
-        if has_plot:
-            
-            ax.set_xlabel("Wavelength (nm)")
-            ax.set_ylabel("Intensity (a.u.)")
-            ax.legend()
-            ax.grid(True, linestyle=':', alpha=0.5)
-            st.pyplot(fig)
-            
-            # --- Excel ダウンロード ---
-            st.markdown("---")
-            st.subheader("📥 解析結果のエクセル出力 (1シート結合)")
-            st.info("💡 複数のファイルを測定順序（行インデックス）を基準に結合し、**波長は1列目のみ**に出力します。")
-            
-            if data_for_export:
-                
-                with st.spinner("Excel出力用にデータを統合中..."):
+                if p1 != p2:
+                    slope_raw = (wl2 - wl1) / (p2 - p1)
+                    slope = np.abs(slope_raw)
                     
-                    # 最初のファイルの波長軸を使用し、以降のファイルの強度のみを結合する
-                    # df.columns[1]は光強度の列名
-                    dfs_to_concat = [data_for_export[0]]
-                    for df in data_for_export[1:]:
-                        current_name = df.columns[1] 
-                        # 'Axis_X'を除外した光強度の列のみを取得して結合リストに追加
-                        dfs_to_concat.append(df[[current_name]])
-                        
-                    # 行のインデックスに基づいて水平に結合 (測定順序を保持)
-                    merged_df = pd.concat(dfs_to_concat, axis=1)
+                    st.success(f"✅ 計算された校正係数 (nm/pixel): **{slope:.4f}**")
+                    st.caption(f"（計算値: {slope_raw:.4f} nm/pixel の絶対値を取得しました。）")
+                    
+                    if st.button("この係数を保存してStep 2へ進む", key="save_slope"):
+                        st.session_state['pl_slope'] = slope
+                        st.rerun() 
+                else: 
+                    st.error("ピーク位置が同じです。異なる波長を持つデータを選択してください。")
+            except Exception as e:
+                st.error(f"解析エラー: データ形式を確認してください ({e})")
+        else:
+            st.error("データの読み込みに失敗しました。数値データ（2列）が含まれているか確認してください。")
 
-                    # to_excel (単一シート出力) を使用。型変換・列名変更はto_excel内で処理される。
-                    # ★ to_excel関数内で 'Axis_X' は 'Voltage_V' にリネームされますが、
-                    # PL解析では波長なので、ここでは便宜上そのまま'Voltage_V'が出力されます。
-                    excel_data = to_excel(merged_df) 
+    st.markdown("---")
 
+    # =========================================================
+    # Step 2: 中心波長の設定
+    # =========================================================
+    st.markdown("## 2️⃣ Step 2: 中心波長の設定")
+    if st.session_state['pl_slope'] is None:
+        st.warning("⚠️ まず Step 1 で校正係数を決定・保存してください。")
+    else:
+        st.success(f"校正係数: {st.session_state['pl_slope']:.4f} nm/pixel が設定されています。")
+        
+        center_wl = st.number_input(
+            "分光器の中心波長 (nm) を入力", 
+            value=st.session_state['pl_center_wl'], 
+            key='center_wl_input'
+        )
+        
+        if st.button("中心波長を保存してStep 3へ進む", key="save_center_wl"):
+            st.session_state['pl_center_wl'] = center_wl
+            st.rerun()
+
+    st.markdown("---")
+    
+    # =========================================================
+    # Step 3: 解析実行
+    # =========================================================
+    st.markdown("## 3️⃣ Step 3: 測定データ解析実行")
+    if st.session_state['pl_slope'] is None or st.session_state['pl_center_wl'] is None:
+        st.warning("⚠️ Step 1 (校正係数) と Step 2 (中心波長) の両方を設定してください。")
+    else:
+        slope = st.session_state['pl_slope']
+        cw = st.session_state['pl_center_wl']
+        st.info(f"現在の設定: 係数={slope:.4f}, 中心波長={cw} nm")
+        
+        files = st.file_uploader("測定データファイル(.txt)", accept_multiple_files=True, key="pl_m")
+        if files:
+            fig, ax = plt.subplots(figsize=(10, 6))
+            has_plot = False
+            data_for_export = []
+
+            for f in files:
+                df = load_pl_data(f)
+                if df is not None and not df.empty:
+                    # 波長校正の適用
+                    df['wl'] = (df['pixel'] - 256.5) * slope + cw
+                    
+                    ax.plot(df['wl'], df['intensity'], label=f.name)
+                    has_plot = True
+                    
+                    # Excel出力用のDataFrameを作成
+                    export_df = df[['wl', 'intensity']].copy()
+                    
+                    # 列名を設定 (結合時に区別するため)
+                    wl_col_name = f"Wavelength ({f.name})"
+                    int_col_name = f"Intensity ({f.name})"
+                    export_df.columns = [wl_col_name, int_col_name]
+                    
+                    data_for_export.append(export_df)
+            
+            if has_plot:
+                # --- プロットの表示 ---
+                ax.set_xlabel("Wavelength (nm)")
+                ax.set_ylabel("Intensity (a.u.)")
+                ax.legend()
+                ax.grid(True, linestyle='--', alpha=0.7)
+                st.pyplot(fig)
+                
+                # --- Excel ダウンロード ---
+                st.markdown("---")
+                st.subheader("📥 解析結果のエクセル出力")
+                
+                # ★ 修正されたExcel出力ロジック: 波長は1列目のみを使用 ★
+                # 1. 最初のファイルの波長列を取得し、列名を Wavelength_nm に変更
+                if not data_for_export:
+                    st.warning("エクスポートするデータがありません。")
+                    return # データがない場合はここで終了
+                    
+                # data_for_export[0]の1列目 (波長) を取得
+                ref_wl_df = data_for_export[0].iloc[:, [0]].copy() 
+                ref_wl_df.columns = ['Wavelength_nm'] # 列名を統一
+                
+                # 2. 全てのファイルの強度列のみを取得
+                # data_for_export[*].iloc[:, [1]]は2列目 (強度)
+                intensity_dfs = [df.iloc[:, [1]] for df in data_for_export] 
+                
+                # 3. 結合リストを [波長, 強度1, 強度2, ...] の順に作成
+                dfs_to_concat = [ref_wl_df] + intensity_dfs
+                
+                # 4. 行インデックスに基づいて水平に結合 (測定順序を保持)
+                merged_df = pd.concat(dfs_to_concat, axis=1)
                 
                 default_name = datetime.now().strftime("PL_Analysis_%Y%m%d")
                 filename_input = st.text_input("ファイル名 (.xlsx)", value=default_name, key="pl_filename")
+                
+                # to_excel関数は型変換のみを行い、このリネームされた列名 ('Wavelength_nm') を維持します
+                excel_data = to_excel(merged_df)
                 
                 st.download_button(
                     label="Excelファイルとしてダウンロード",
@@ -777,9 +852,8 @@ def page_pl_analysis():
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="pl_download_btn"
                 )
-        else:
-            st.warning("プロットできるデータがありませんでした。ファイル形式を確認してください。")
-
+            else:
+                st.warning("プロットできるデータがありませんでした。ファイル形式を確認してください。")
 # ---------------------------
 # --- Calendar ---
 # ---------------------------
@@ -872,6 +946,7 @@ if __name__ == "__main__":
         pass
         
     main()
+
 
 
 
