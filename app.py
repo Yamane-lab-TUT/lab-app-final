@@ -313,7 +313,7 @@ def load_pl_data(uploaded_file):
         return None
 
 # ---------------------------
-# --- NEW: General Graph Plotting Page (修正版) ---
+# --- NEW: General Graph Plotting Page (文字コード対応強化版) ---
 # ---------------------------
 def page_graph_plotting():
     st.header("📈 高機能グラフ描画")
@@ -329,41 +329,61 @@ def page_graph_plotting():
 
     # 読み込み処理
     data_list = []
+    
+    # 試行する文字コードのリスト (順に試す)
+    encodings_to_try = ['utf-8', 'shift_jis', 'cp932', 'euc_jp']
+
     for f in files:
         df = None
-        try:
-            # 読み込み試行1: 一般的なCSVとして読み込み（ヘッダーあり、カンマ区切り）
-            # StreamlitのUploadedFileはseek(0)が必要な場合がある
-            f.seek(0)
-            df = pd.read_csv(f)
-            
-            # もし1列しか認識されなかった場合、または区切り文字が違う可能性がある場合
-            if df.shape[1] <= 1:
-                # 読み込み試行2: タブ区切りまたはスペース区切りを試す
+        success = False
+        
+        for enc in encodings_to_try:
+            try:
+                # 読み込み試行1: 一般的なCSVとして読み込み（ヘッダーあり、カンマ区切り）
                 f.seek(0)
-                content = f.getvalue().decode('utf-8', errors='ignore')
-                # コメント行を除去
-                lines = [l.strip() for l in content.splitlines() if l.strip() and not l.strip().startswith(('#','!','/'))]
+                df = pd.read_csv(f, encoding=enc)
                 
-                if lines:
-                    # ヘッダーがあるか判定 (1行目が数字で始まらないならヘッダーとみなす)
-                    header_opt = 'infer'
-                    if lines[0][0].isdigit() or lines[0].startswith('-'):
-                        header_opt = None
+                # もし1列しか認識されなかった場合、区切り文字が「カンマ」以外（スペースやタブ）の可能性がある
+                if df.shape[1] <= 1:
+                    # 読み込み試行2: テキストとして読み込み、正規表現で区切る
+                    f.seek(0)
+                    content = f.getvalue().decode(enc)
                     
-                    df = pd.read_csv(io.StringIO("\n".join(lines)), sep=r'[\t, ]+', engine='python', header=header_opt)
+                    # コメント行を除去
+                    lines = [l.strip() for l in content.splitlines() if l.strip() and not l.strip().startswith(('#','!','/'))]
+                    
+                    if lines:
+                        # ヘッダー判定 (1行目が数字で始まらないならヘッダーとみなす)
+                        header_opt = 'infer'
+                        # マイナス符号や小数点も考慮して数値判定
+                        first_val = lines[0].split()[0].replace(',', '') # カンマ除去して判定
+                        if first_val.replace('.', '', 1).replace('-', '', 1).isdigit():
+                            header_opt = None
+                        
+                        # エンジンをpythonにして、スペース・タブ・カンマのいずれでも区切れるようにする
+                        df = pd.read_csv(io.StringIO("\n".join(lines)), sep=r'[\t, ]+', engine='python', header=header_opt)
+                
+                # ここまでエラーなく来たら成功とみなす
+                success = True
+                break # ループを抜ける
+            
+            except Exception:
+                # このエンコーディングでは失敗。次を試す。
+                continue
 
-        except Exception as e:
-            st.error(f"{f.name} の読み込みに失敗しました: {e}")
+        if not success or df is None or df.empty:
+            st.error(f"❌ {f.name} の読み込みに失敗しました。文字コードやファイル形式を確認してください。")
             continue
 
-        if df is not None and not df.empty:
-            # 列名が数字の連番になっている場合（header=Noneのとき）、わかりやすくリネーム
-            if isinstance(df.columns[0], int):
-                cols = [f"Col {i+1}" for i in range(df.shape[1])]
-                df.columns = cols
-            
-            data_list.append({"name": f.name, "df": df})
+        # 列名が数字の連番になっている場合（header=Noneのとき）、わかりやすくリネーム
+        if isinstance(df.columns[0], int):
+            cols = [f"Col {i+1}" for i in range(df.shape[1])]
+            df.columns = cols
+        
+        # データの列名に重複がある場合、pandasは .1, .2 をつけるが、念のためクリーンにする
+        df.columns = [str(c).strip() for c in df.columns]
+        
+        data_list.append({"name": f.name, "df": df})
 
     if not data_list: return
 
@@ -994,4 +1014,5 @@ if __name__ == "__main__":
     except Exception:
         pass
     main()
+
 
