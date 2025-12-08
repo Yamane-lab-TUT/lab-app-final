@@ -189,6 +189,48 @@ def initialize_google_services():
         st.sidebar.error(f"Googleサービスの初期化に失敗しました: {e}")
         return DummyGSClient(), DummyStorageClient()
 
+# ---------------------------
+# --- GCS アップロードユーティリティ ---
+# ---------------------------
+def upload_file_to_gcs(storage_client_obj, file_obj): 
+    """
+    StreamlitのアップロードファイルをGCSのルートに保存し、公開URLを返す。
+    この関数は、storage_client_objが正しく初期化され、CLOUD_STORAGE_BUCKET_NAMEが
+    グローバルに定義されていることを前提とする。
+    """
+    # 必要なモジュールはファイル上部でインポートされている前提
+    from datetime import datetime
+    from urllib.parse import quote as url_quote
+    
+    # storage はファイル上部でインポートされていると仮定
+    if storage_client_obj is None or storage is None:
+        return None, None
+
+    try:
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        
+        # file_obj は Streamlit UploadedFile であり、.name 属性を持つ
+        original_filename = file_obj.name
+        # ファイル名のスペースとスラッシュをアンダースコアに置換し、安全にする
+        safe_filename = original_filename.replace(' ', '_').replace('/', '_')
+        # フォルダ分けをせず、常にGCSのルートに保存
+        # CLOUD_STORAGE_BUCKET_NAME はグローバルに定義されていると仮定
+        gcs_filename = f"{timestamp}_{safe_filename}"
+
+        bucket = storage_client_obj.bucket(CLOUD_STORAGE_BUCKET_NAME)
+        blob = bucket.blob(gcs_filename)
+
+        # ファイルをメモリからアップロード
+        file_bytes = file_obj.getvalue()
+        blob.upload_from_string(file_bytes, content_type=file_obj.type if hasattr(file_obj, 'type') else 'application/octet-stream')
+
+        # 非公開のまま、認証済みアクセスが可能な公開URLを生成
+        public_url = f"https://storage.googleapis.com/{CLOUD_STORAGE_BUCKET_NAME}/{url_quote(gcs_filename)}"
+        return original_filename, public_url
+        
+    except Exception as e:
+        # エラーは呼び出し側 (page_epi_note_recording) で表示されるため、ここではエラーを返さない
+        return None, None
 # 実際に初期化してグローバルを書き換え
 gc, storage_client = initialize_google_services()
 
@@ -490,9 +532,7 @@ def get_note_files_from_gcs(folder_type):
         st.error(f"GCSファイルリストの取得中にエラーが発生しました: {e}")
         return []
 
-# ---------------------------
-# --- GCSファイル閲覧機能 ---
-# ---------------------------
+
 # ---------------------------
 # --- GCSファイル閲覧機能 ---
 # ---------------------------
@@ -544,13 +584,7 @@ def display_gcs_files(folder_type):
             display_attached_files(pseudo_row, 'url', 'filename')
         else:
             st.error("ファイル情報が見つかりません。")
-# ... (後略: page_mainte_list など、他のリスト表示関数もすべて page_data_list を呼び出しており、page_data_list が display_attached_files を呼び出しているため、自動的に新しい表示方法が適用されます。) ...
 
-# ---------------------------
-# --- ユーティリティ参照 ---
-# ---------------------------
-# 前半部を同一ファイルにまとめない場合は import で呼ぶ（例: from bennriyasann3_fixed_v2_part1 import *）
-# ここでは「同一実行環境にpart1がロード済み」と仮定します。
 
 # ---------------------------
 # --- 汎用的な一覧表示関数 ---
@@ -1586,6 +1620,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
