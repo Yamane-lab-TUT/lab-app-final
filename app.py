@@ -315,6 +315,9 @@ def load_pl_data(uploaded_file):
 # ---------------------------
 # --- NEW: General Graph Plotting Page (文字コード対応強化版) ---
 # ---------------------------
+# ---------------------------
+# --- NEW: General Graph Plotting Page (文字コード/区切り文字対応強化版) ---
+# ---------------------------
 def page_graph_plotting():
     st.header("📈 高機能グラフ描画")
     st.markdown("論文・レポート用の美しいグラフを作成します。詳細設定が可能です。")
@@ -329,58 +332,70 @@ def page_graph_plotting():
 
     # 読み込み処理
     data_list = []
-    
     # 試行する文字コードのリスト (順に試す)
     encodings_to_try = ['utf-8', 'shift_jis', 'cp932', 'euc_jp']
 
     for f in files:
         df = None
         success = False
+        # ファイル全体をバイトデータとして読み込む
+        raw_bytes = f.getvalue() 
         
+        # 1. バイトデータを複数の文字コードでデコードを試みる
+        decoded_content = None
         for enc in encodings_to_try:
             try:
-                # 読み込み試行1: 一般的なCSVとして読み込み（ヘッダーあり、カンマ区切り）
-                f.seek(0)
-                df = pd.read_csv(f, encoding=enc)
-                
-                # もし1列しか認識されなかった場合、区切り文字が「カンマ」以外（スペースやタブ）の可能性がある
-                if df.shape[1] <= 1:
-                    # 読み込み試行2: テキストとして読み込み、正規表現で区切る
-                    f.seek(0)
-                    content = f.getvalue().decode(enc)
-                    
-                    # コメント行を除去
-                    lines = [l.strip() for l in content.splitlines() if l.strip() and not l.strip().startswith(('#','!','/'))]
-                    
-                    if lines:
-                        # ヘッダー判定 (1行目が数字で始まらないならヘッダーとみなす)
-                        header_opt = 'infer'
-                        # マイナス符号や小数点も考慮して数値判定
-                        first_val = lines[0].split()[0].replace(',', '') # カンマ除去して判定
-                        if first_val.replace('.', '', 1).replace('-', '', 1).isdigit():
-                            header_opt = None
-                        
-                        # エンジンをpythonにして、スペース・タブ・カンマのいずれでも区切れるようにする
-                        df = pd.read_csv(io.StringIO("\n".join(lines)), sep=r'[\t, ]+', engine='python', header=header_opt)
-                
-                # ここまでエラーなく来たら成功とみなす
+                decoded_content = raw_bytes.decode(enc)
                 success = True
-                break # ループを抜ける
-            
+                break
             except Exception:
-                # このエンコーディングでは失敗。次を試す。
                 continue
 
-        if not success or df is None or df.empty:
-            st.error(f"❌ {f.name} の読み込みに失敗しました。文字コードやファイル形式を確認してください。")
+        if not success or decoded_content is None:
+            st.error(f"❌ {f.name} の読み込みに失敗しました。文字コードが特殊な形式である可能性があります。")
             continue
 
-        # 列名が数字の連番になっている場合（header=Noneのとき）、わかりやすくリネーム
-        if isinstance(df.columns[0], int):
+        # 2. デコードされたコンテンツからデータ行を抽出 (コメント行除去)
+        lines = [l.strip() for l in decoded_content.splitlines() if l.strip() and not l.strip().startswith(('#','!','/'))]
+        if not lines:
+            st.warning(f"⚠️ {f.name} にプロットできるデータ行が見つかりませんでした。")
+            continue
+
+        # 3. ヘッダー判定 (1行目が数字で始まらないならヘッダーとみなす)
+        header_opt = 'infer'
+        first_line_parts = lines[0].split()
+        if first_line_parts:
+            # 最初の要素が数値に見えるか判定 (マイナス、小数点も考慮)
+            first_val = first_line_parts[0].replace(',', '') 
+            if first_val.replace('.', '', 1).replace('-', '', 1).isdigit():
+                header_opt = None # ヘッダーなし
+        
+        # 4. 読み込み試行（区切り文字の優先順位付け）
+        read_success = False
+        
+        # Try A: 厳密なカンマ区切り (Excel出力CSVの標準) を最優先
+        try:
+            df = pd.read_csv(io.StringIO("\n".join(lines)), sep=',', engine='python', header=header_opt)
+            read_success = True
+        except Exception:
+             # Try B: スペースまたはタブ区切り (テキスト/DATファイルの標準)
+            try:
+                df = pd.read_csv(io.StringIO("\n".join(lines)), sep=r'[\t ]+', engine='python', header=header_opt)
+                read_success = True
+            except Exception:
+                pass # Try Bも失敗
+
+        if not read_success or df is None or df.empty or df.shape[1] < 2:
+            st.error(f"❌ {f.name} のデータ解析に失敗しました。データが数値形式で2列以上あるか、列数が一定か確認してください。")
+            continue
+
+        # 5. 後処理
+        # 列名が数字の連番になっている場合、わかりやすくリネーム
+        if all(isinstance(col, int) for col in df.columns):
             cols = [f"Col {i+1}" for i in range(df.shape[1])]
             df.columns = cols
         
-        # データの列名に重複がある場合、pandasは .1, .2 をつけるが、念のためクリーンにする
+        # 列名の余分な空白を削除
         df.columns = [str(c).strip() for c in df.columns]
         
         data_list.append({"name": f.name, "df": df})
@@ -388,11 +403,11 @@ def page_graph_plotting():
     if not data_list: return
 
     # --- 左サイドバー風の設定エリア (Expander) ---
-    st.markdown("### 2. グラフ詳細設定")
-    
-    # レイアウト: 2カラム
     col_settings, col_preview = st.columns([1, 2])
 
+    # (以降の描画設定、プレビュー、ダウンロード部分は前回のコードと同じです)
+    # ... (前回のコードの `with col_settings:` から最後までをそのまま継続してください)
+    
     with col_settings:
         with st.expander("📊 キャンバスとフォント (全体)", expanded=True):
             fig_w = st.number_input("幅 (inch)", 1.0, 50.0, 8.0, step=0.5)
@@ -434,7 +449,6 @@ def page_graph_plotting():
                 # 列選択
                 cols = d['df'].columns.tolist()
                 c1, c2, c3 = st.columns(3)
-                # デフォルトで1列目をX、2列目をYにする（存在すれば）
                 default_x = 0
                 default_y = 1 if len(cols) > 1 else 0
                 
@@ -453,7 +467,6 @@ def page_graph_plotting():
                 marker = cc2.selectbox(f"マーカー ({i})", ["None", "o", "s", "^", "D", "x"], index=0, key=f"mark_{i}")
                 linestyle = cc3.selectbox(f"線種 ({i})", ["-", "--", "-.", ":", "None"], index=0, key=f"line_{i}")
                 
-                # 凡例ラベル: デフォルトはファイル名だが、列名も含めるか選択可能にすると便利
                 label_txt = st.text_input(f"凡例ラベル ({i})", d['name'], key=f"leg_{i}")
                 
                 plot_configs.append({
@@ -1014,5 +1027,6 @@ if __name__ == "__main__":
     except Exception:
         pass
     main()
+
 
 
