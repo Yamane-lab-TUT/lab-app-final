@@ -1578,14 +1578,13 @@ def page_calendar():
             except Exception as e:
                 st.error(f"予定の登録中に予期せぬエラーが発生しました: {e}")
 # ---------------------------
-# --- メインルーティング ---
-# ---------------------------
-# ---------------------------
-# --- メインルーティング ---
+# --- メインルーティング (最終修正版) ---
 # ---------------------------
 def main():
     st.sidebar.title("山根研 ツールキット")
-    menu_selection = st.sidebar.radio("機能選択", [
+    
+    # 既存のメニューを正確に反映
+    menu_items = [
         "エピノート",
         "メンテノート",
         "🗓️ スケジュール・装置予約",
@@ -1596,27 +1595,24 @@ def main():
         "装置引き継ぎメモ",
         "トラブル報告",
         "連絡・問い合わせ",
-    ])
+    ]
+    menu_selection = st.sidebar.radio("機能選択", menu_items)
     
-    # 【重要修正】メニュー切り替え時にキャッシュをクリアする
-    # st.session_state.menu_selection が現在のメニュー選択を格納
+    # 【重要修正】メニュー切り替え時にデータキャッシュをクリアするロジック
     if 'menu_selection' not in st.session_state:
         st.session_state.menu_selection = menu_selection
     
-    # 選択が変更された場合、または初期ロード時
     if st.session_state.menu_selection != menu_selection:
         # データ読み込み関数（get_data_from_gspread）のキャッシュをクリア
-        # ※ get_data_from_gspread が定義され、@st.cache_data が付いている前提
         try:
             get_data_from_gspread.clear()
         except NameError:
-            # 万が一 get_data_from_gspread が未定義の場合のフォールバック
+            # get_data_from_gspread が未定義の場合のフォールバック
             if 'st.cache_data' in st.__dict__:
                 st.cache_data.clear()
         
         st.session_state.menu_selection = menu_selection
         # キャッシュクリア後、st.rerun() は不要。次回実行時に自動でデータ取得が行われる
-        # ただし、確実な反映のため、ここではあえて st.rerun() を省略
         
     # --- ページルーティング ---
     if menu_selection == "エピノート":
@@ -1624,7 +1620,7 @@ def main():
     elif menu_selection == "メンテノート":
         page_mainte_note()
     elif menu_selection == "🗓️ スケジュール・装置予約":
-        page_schedule_reservation() # この関数が別途定義されていることを仮定
+        page_schedule_reservation()
     elif menu_selection == "IVデータ解析":
         page_iv_analysis()
     elif menu_selection == "PLデータ解析":
@@ -1632,18 +1628,17 @@ def main():
     elif menu_selection == "議事録":
         page_meeting_note()
     elif menu_selection == "知恵袋・質問箱":
-        page_faq() # この関数が別途定義されていることを仮定
+        page_faq()
     elif menu_selection == "装置引き継ぎメモ":
-        page_device_handover() # この関数が別途定義されていることを仮定
+        page_device_handover()
     elif menu_selection == "トラブル報告":
-        page_trouble_report() # この関数が別途定義されていることを仮定
+        page_trouble_report()
     elif menu_selection == "連絡・問い合わせ":
-        page_contact() # この関数が別途定義されていることを仮定
-
-# --------------------------
+        page_contact()
 
 if __name__ == "__main__":
     main()
+
 
 
 
