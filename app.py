@@ -219,13 +219,21 @@ def _load_two_column_data_core(uploaded_bytes, column_names):
         text = uploaded_bytes.decode('utf-8', errors='ignore').splitlines()
         # コメント/空行を除く
         data_lines = []
+        is_first_data_line = True # 【追加】ヘッダー行をスキップするためのフラグ
         for line in text:
             s = line.strip()
             if not s:
                 continue
             if s.startswith(('#', '!', '/')):  # コメント行
                 continue
+            
+            # 【修正】最初に見つかった非コメント/非空行（ヘッダー行）をスキップ
+            if is_first_data_line:
+                is_first_data_line = False
+                continue
+                
             data_lines.append(line)
+            
         if not data_lines:
             return None
         # pandas に渡す
@@ -238,13 +246,16 @@ def _load_two_column_data_core(uploaded_bytes, column_names):
         # 数値変換
         df[column_names[0]] = pd.to_numeric(df[column_names[0]], errors='coerce')
         df[column_names[1]] = pd.to_numeric(df[column_names[1]], errors='coerce')
-        df = df.dropna().sort_values(column_names[0]).reset_index(drop=True)
+        
+        # 【修正】往路/復路解析のためにソート（.sort_values）を削除し、dropnaのみを行う
+        df = df.dropna().reset_index(drop=True)
+        
         if df.empty:
             return None
         return df
     except Exception:
+        # 読み込み失敗時は None を返す（元の挙動を維持）
         return None
-
 # ---------------------------
 # --- IV / PL 専用読み込み ---
 # ---------------------------
@@ -967,88 +978,75 @@ def page_contact_form():
 # --- IVデータ解析ページ ---
 # ---------------------------
 def page_iv_analysis():
-    st.title("⚡ IVデータ解析")
-    st.markdown("IV測定データファイル（2列データ：X軸/Y軸）をアップロードし、往路/復路の特性をプロットします。")
+    st.header("⚡ IVデータ解析")
+    st.markdown("IV測定データファイル（2列データ：X軸/Y軸）をアップロードし、ソートせずに往路/復路の特性をプロットします。")
+    
+    uploaded_files = st.file_uploader("IV測定データファイル (.txt) をアップロード", type=['txt'], accept_multiple_files=True)
+    if not uploaded_files:
+        st.info("ファイルをアップロードしてください。")
+        return
 
-    # --- 【NameError解消の修正】: ファイルアップローダーを定義し、戻り値を 'uploaded_files' に格納 ---
-    uploaded_files = st.file_uploader(
-        "IV測定データファイル (CSV/TXT形式) を選択してください",
-        type=["csv", "txt"],
-        accept_multiple_files=True
-    )
-    # -----------------------------------------------------------------------------------------
-
-    if uploaded_files:
-        st.subheader("IV測定データ 解析")
-        
-        data_frames = {}
-        file_names = []
-        
-        # データの読み込み
-        for uploaded_file in uploaded_files:
-            # データの読み込みには load_data_file を使用 (2列データ用)
-            # load_data_fileは app (4).py 内に定義されている前提
-            df = load_data_file(uploaded_file, uploaded_file.name)
-            if df is not None:
-                data_frames[uploaded_file.name] = df
-                file_names.append(uploaded_file.name)
-            else:
-                st.warning(f"{uploaded_file.name} の読み込みに失敗したか、データが不正です。")
-
-        if not data_frames:
-            st.error("アップロードされたファイルから有効なデータが読み取れませんでした。")
-            return
-
-        # --- データプロット (往路/復路) ---
-        # 結合処理は行わず、個々のデータフレームを往路/復路に分けてプロットします。
-        fig, ax = plt.subplots(figsize=(10, 6))
-        
-        # X軸とY軸の列名を取得
-        x_col = data_frames[file_names[0]].columns[0]
-        y_col = data_frames[file_names[0]].columns[1]
-        
-        for name, df in data_frames.items():
+    data_frames = {}
+    file_names = []
+    
+    st.subheader("ステップ1: ファイル読み込みと解析")
+    
+    for uploaded_file in uploaded_files:
+        # load_data_file は bytes を受け取る 
+        df = load_data_file(uploaded_file.getvalue(), uploaded_file.name)
+        if df is not None and not df.empty:
+            data_frames[uploaded_file.name] = df
+            file_names.append(uploaded_file.name)
+        else:
+            # 読み込みに失敗したファイル名を表示
+            st.warning(f"{uploaded_file.name} の読み込みに失敗したか、データが不正です。") 
             
-            # X軸データ
-            x_data = df.iloc[:, 0] 
-            
-            # X軸の最大値を持つインデックス (折り返し点) を特定
-            # IV測定は通常、X軸が最大になる点が折り返し点
-            if not x_data.empty:
-                max_index = x_data.idxmax()
-            else:
-                continue
+    if not data_frames:
+        st.error("有効なデータファイルが見つかりませんでした。")
+        return
 
-            # 往路 (Forward: データの最初から最大値まで)
-            df_forward = df.iloc[:max_index + 1]
-            if not df_forward.empty:
-                ax.plot(df_forward.iloc[:, 0], df_forward.iloc[:, 1], 
-                        label=f"{name} (Forward)", linestyle='-', marker='o', markersize=3, alpha=0.7)
+    st.success(f"{len(data_frames)} 個の有効なファイルを読み込みました。")
 
-            # 復路 (Reverse: 最大値の次から最後まで)
-            df_reverse = df.iloc[max_index + 1:]
-            if not df_reverse.empty:
-                ax.plot(df_reverse.iloc[:, 0], df_reverse.iloc[:, 1], 
-                        label=f"{name} (Reverse)", linestyle='--', marker='x', markersize=3, alpha=0.7)
+    st.subheader("ステップ2: グラフ表示 (往路/復路)")
+    
+    fig, ax = plt.subplots(figsize=(12, 7))
+    
+    # 軸ラベルは最初のDFから取得 (データが2列であることを前提)
+    x_col = data_frames[file_names[0]].columns[0] # Axis_X
+    y_col = data_frames[file_names[0]].columns[1] # <ファイル名>
+    
+    for name, df in data_frames.items():
+        # X軸データ
+        x_data = df.iloc[:, 0] 
         
-        # グラフの装飾
-        ax.set_xlabel(x_col)
-        ax.set_ylabel(y_col)
-        ax.set_title("IV Characteristic (Forward/Reverse)")
-        ax.legend()
-        ax.grid(True)
-        
-        # Streamlitにプロットを表示
-        st.pyplot(fig)
-        plt.close(fig) # メモリ解放
+        # 往路/復路の分割点を特定: X軸の最大値のインデックス
+        if x_data.empty:
+             continue
+             
+        max_index = x_data.idxmax()
 
-        # 個別のデータフレームの表示オプション
-        if st.checkbox("個別のデータフレームを表示"):
-            for name, df in data_frames.items():
-                st.write(f"--- {name} ---")
-                st.dataframe(df)
-    else:
-        st.info("IV測定データファイルをアップロードしてください。")
+        # 往路 (Forward: データの最初から最大値まで)
+        df_forward = df.iloc[:max_index + 1]
+        if not df_forward.empty:
+            ax.plot(df_forward.iloc[:, 0], df_forward.iloc[:, 1], 
+                    label=f"{name} (往路)", linestyle='-', marker='o', markersize=3, alpha=0.7)
+
+        # 復路 (Reverse: 最大値の次から最後まで)
+        df_reverse = df.iloc[max_index + 1:]
+        if not df_reverse.empty:
+            ax.plot(df_reverse.iloc[:, 0], df_reverse.iloc[:, 1], 
+                    label=f"{name} (復路)", linestyle='--', marker='x', markersize=3, alpha=0.7)
+
+    # グラフの装飾
+    ax.set_xlabel(x_col)
+    ax.set_ylabel(y_col)
+    ax.set_title("IV特性比較 (ソートなし、往路/復路表示)")
+    ax.legend(title="ファイル名", loc='best')
+    ax.grid(True)
+    st.pyplot(fig, use_container_width=True)
+    plt.close(fig) # メモリ解放
+    
+    st.info("※ ユーザーの要望に基づき、データ結合（補間）およびX軸でのソート処理は行っていません。")
 
 # ---------------------------
 # --- PLデータ解析ページ ---
@@ -1436,6 +1434,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
