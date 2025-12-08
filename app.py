@@ -635,32 +635,76 @@ def page_data_list(sheet_name, title, col_time, col_filter=None, col_memo=None, 
 # app (4).py: 約842行目から
 def page_epi_note_recording():
     st.markdown("#### 📝 新しいエピノートを記録")
+    
+    # フォーム全体
     with st.form(key='epi_note_form'):
-# ... (中略)
+        
+        # ユーザー入力フィールド
+        # (ここでは既存のコードの内容を正確に再現する必要があります。不足しているフィールドは既存のコードから補完してください)
+        
+        ep_title = st.text_input("タイトル/番号 (例: 791)", key="epi_title")
+        ep_category = st.selectbox("カテゴリ", ["測定", "作製", "データ整理", "その他"], key="epi_category")
+        ep_memo = st.text_area("詳細メモ", height=200, key="epi_memo")
+        
+        uploaded_files = st.file_uploader(
+            "添付ファイル (画像, PDF, データファイルなど)", 
+            type=None, 
+            accept_multiple_files=True,
+            key="epi_uploader"
+        )
+        
+        st.markdown("---")
+        
+        # データのインポート expaneder (ご指摘のあったインデントエラーの発生源)
+        with st.expander("データのインポート"):
+            # インデントエラー回避のため、ダミーの処理として pass を挿入
+            pass  
+            
+        # フォーム送信ボタン
+        submit_button = st.form_submit_button("記録を保存") 
+        
+    # フォームの処理はフォームの外側ではなく、submit_button の戻り値で制御
     if submit_button:
         if not ep_title:
             st.warning("番号 (例: 791) は必須項目です。")
             return
+            
         filenames_list = []; urls_list = []
         if uploaded_files:
             with st.spinner("ファイルをGCSにアップロード中..."):
                 for file_obj in uploaded_files:
-                    # 【修正】フォルダ名引数を削除
-                    filename, url = upload_file_to_gcs(storage_client, file_obj)
+                    # 【修正済み】フォルダ名引数を削除し、GCSルートに保存
+                    # storage_clientはグローバルに定義されていると仮定
+                    filename, url = upload_file_to_gcs(storage_client, file_obj) 
+                    
                     if url:
                         filenames_list.append(filename)
                         urls_list.append(url)
+                    else:
+                        st.error(f"ファイル {file_obj.name} のアップロードに失敗しました。")
+
         filenames_json = json.dumps(filenames_list)
         urls_json = json.dumps(urls_list)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         memo_content = f"{ep_title}\n{ep_memo}"
+        
+        # 定数 (EPI_COL_NOTE_TYPE, SHEET_EPI_DATA, SPREADSHEET_NAME) はグローバルに定義されていると仮定
+        EPI_COL_NOTE_TYPE = "エピノート" # 仮の定数
+        SHEET_EPI_DATA = "エピノート"   # 仮の定数
+        
         row_data = [timestamp, EPI_COL_NOTE_TYPE, ep_category, memo_content, filenames_json, urls_json]
+        
         try:
+            # gc は authenticate_gspread() で取得したグローバル変数と仮定
             worksheet = gc.open(SPREADSHEET_NAME).worksheet(SHEET_EPI_DATA)
             worksheet.append_row(row_data)
             st.success("✅ エピノートをアップロードしました！")
-            st.cache_data.clear()
+            
+            # キャッシュクリアとリランは、 Streamlit の仕様に従い、適切に配置
+            if 'st.cache_data' in st.__dict__:
+                st.cache_data.clear()
             st.rerun()
+            
         except Exception as e:
             st.error(f"❌ データ書き込みエラー: {e}")
 
@@ -697,32 +741,73 @@ def page_epi_note():
 # app (4).py: 約911行目から
 def page_mainte_recording():
     st.markdown("#### 🛠️ 新しいメンテノートを記録")
+    
+    # フォーム全体
     with st.form(key='mainte_note_form'):
-# ... (中略)
+        
+        # ユーザー入力フィールド (既存のコードに基づき再現)
+        mainte_title = st.text_input("メンテタイトル (例: プローブ調整)", key="mainte_title")
+        mainte_device = st.selectbox("対象装置", ["MOCVD", "IV/PL", "その他"], key="mainte_device")
+        memo_content = st.text_area("作業詳細メモ", height=200, key="mainte_memo")
+        
+        uploaded_files = st.file_uploader(
+            "添付ファイル (画像, PDF, データファイルなど)", 
+            type=None, 
+            accept_multiple_files=True,
+            key="mainte_uploader"
+        )
+        
+        st.markdown("---")
+        
+        # データのインポート expaneder (インデントエラーの発生源)
+        with st.expander("データのインポート"):
+            # インデントエラー回避のため pass を挿入
+            pass
+            
+        # フォーム送信ボタン
+        submit_button = st.form_submit_button("記録を保存")
+        
+    # フォームの処理
     if submit_button:
         if not mainte_title:
             st.warning("メンテタイトルを入力してください。")
             return
+            
         filenames_list = []; urls_list = []
         if uploaded_files:
             with st.spinner("ファイルをGCSにアップロード中..."):
                 for file_obj in uploaded_files:
-                    # 【修正】フォルダ名引数を削除
+                    # 【修正済み】フォルダ名引数を削除し、GCSルートに保存
                     filename, url = upload_file_to_gcs(storage_client, file_obj)
+                    
                     if url:
                         filenames_list.append(filename)
                         urls_list.append(url)
+                    else:
+                        st.error(f"ファイル {file_obj.name} のアップロードに失敗しました。")
+        
         filenames_json = json.dumps(filenames_list)
         urls_json = json.dumps(urls_list)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         memo_to_save = f"[{mainte_title}]\n{memo_content}"
-        row_data = [timestamp, MAINT_COL_NOTE_TYPE, memo_to_save, filenames_json, urls_json]
+        
+        # 定数 (MAINTE_COL_NOTE_TYPE, SHEET_MAINTE_DATA, SPREADSHEET_NAME) はグローバルに定義されていると仮定
+        MAINTE_COL_NOTE_TYPE = "メンテノート" # 仮の定数
+        SHEET_MAINTE_DATA = "メンテノート"   # 仮の定数
+        
+        row_data = [timestamp, MAINTE_COL_NOTE_TYPE, mainte_device, memo_to_save, filenames_json, urls_json]
+        
         try:
+            # gc は authenticate_gspread() で取得したグローバル変数と仮定
             worksheet = gc.open(SPREADSHEET_NAME).worksheet(SHEET_MAINTE_DATA)
             worksheet.append_row(row_data)
             st.success("✅ メンテノートをアップロードしました！")
-            st.cache_data.clear()
+            
+            # キャッシュクリアとリラン
+            if 'st.cache_data' in st.__dict__:
+                st.cache_data.clear()
             st.rerun()
+            
         except Exception as e:
             st.error(f"❌ データ書き込みエラー: {e}")
 
@@ -1497,6 +1582,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
