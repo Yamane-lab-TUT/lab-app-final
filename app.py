@@ -559,98 +559,131 @@ def page_iv_analysis():
     st.header("⚡ IVデータ解析")
     files = st.file_uploader("IVファイル(.txt)", accept_multiple_files=True)
     if files:
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(figsize=(8, 6)) # グラフサイズを調整
+        has_plot = False
         for f in files:
+            # load_data_file は、X軸が 'Axis_X'、Y軸が2列目（ファイル名）のDataFrameを返す
             df = load_data_file(f.getvalue(), f.name)
             if df is not None:
+                # グラフをプロット
                 ax.plot(df['Axis_X'], df.iloc[:,1], label=f.name)
-        ax.set_xlabel("Voltage"); ax.set_ylabel("Current")
-        ax.legend()
-        st.pyplot(fig)
+                has_plot = True
+
+        if has_plot:
+            # --- ゼロ線（補助線）の追加 ---
+            ax.axhline(0, color='gray', linestyle='--', linewidth=1) # Y=0 (電流ゼロ)
+            ax.axvline(0, color='gray', linestyle='--', linewidth=1) # X=0 (電圧ゼロ)
+            
+            ax.set_xlabel("Voltage")
+            ax.set_ylabel("Current")
+            ax.legend()
+            ax.grid(True, linestyle=':', alpha=0.5) # 薄いグリッドも追加
+            st.pyplot(fig)
+        else:
+            st.warning("プロットできるデータがありませんでした。ファイル形式を確認してください。")
 
 def page_pl_analysis():
     st.header("PLデータ解析")
     if 'pl_slope' not in st.session_state: st.session_state['pl_slope'] = None
     if 'pl_center_wl' not in st.session_state: st.session_state['pl_center_wl'] = 1700
 
-    tab1, tab2, tab3 = st.tabs(["Step 1: 波長校正", "Step 2: 中心波長設定", "Step 3: 解析実行"])
+    # =========================================================
+    # Step 1: 波長校正 (タブを廃止し、セクション化)
+    # =========================================================
+    st.markdown("## 1️⃣ Step 1: 波長校正")
+    st.info("2つの既知の波長ピークを持つデータをアップロードし、校正係数を決定します。")
     
-    with tab1:
-        st.info("2つの既知の波長ピークを持つデータをアップロードし、校正係数を決定します。")
-        c1, c2 = st.columns(2)
-        wl1 = c1.number_input("波長1 (nm)", value=1500.0)
-        wl2 = c2.number_input("波長2 (nm)", value=1570.0)
+    c1, c2 = st.columns(2)
+    wl1 = c1.number_input("既知波長1 (nm)", value=1500.0, key="wl1_input")
+    wl2 = c2.number_input("既知波長2 (nm)", value=1570.0, key="wl2_input")
+    
+    f1 = c1.file_uploader("波長1データファイル", key="c1")
+    f2 = c2.file_uploader("波長2データファイル", key="c2")
+    
+    if f1 and f2:
+        df1 = load_pl_data(f1)
+        df2 = load_pl_data(f2)
         
-        f1 = c1.file_uploader("波長1データ", key="c1")
-        f2 = c2.file_uploader("波長2データ", key="c2")
-        
-        if f1 and f2:
-            df1 = load_pl_data(f1)
-            df2 = load_pl_data(f2)
-            
-            if df1 is not None and not df1.empty and df2 is not None and not df2.empty:
-                try:
-                    p1 = df1.loc[df1['intensity'].idxmax(), 'pixel']
-                    p2 = df2.loc[df2['intensity'].idxmax(), 'pixel']
-                    
-                    if p1 != p2:
-                        slope = (wl2 - wl1) / (p2 - p1)
-                        st.success(f"✅ 校正係数 (nm/pixel): **{slope:.4f}**")
-                        if st.button("この係数を保存してStep 2へ進む"):
-                            st.session_state['pl_slope'] = slope
-                            st.rerun() 
-                    else: 
-                        st.error("ピーク位置が同じです。異なる波長を持つデータを選択してください。")
-                except Exception as e:
-                    st.error(f"解析エラー: データ形式を確認してください ({e})")
-            else:
-                st.error("データの読み込みに失敗しました。数値データ（2列）が含まれているか確認してください。")
-
-    with tab2:
-        st.subheader("Step 2: 中心波長の設定")
-        if not st.session_state['pl_slope']:
-            st.warning("⚠️ まず Step 1 で校正係数を決定・保存してください。")
-        else:
-            st.success(f"校正係数: {st.session_state['pl_slope']:.4f} nm/pixel が設定されています。")
-            
-            center_wl = st.number_input(
-                "中心波長 (nm) を入力", 
-                value=st.session_state['pl_center_wl'], 
-                key='center_wl_input'
-            )
-            
-            if st.button("中心波長を保存してStep 3へ進む"):
-                st.session_state['pl_center_wl'] = center_wl
-                st.rerun()
-
-    with tab3:
-        st.subheader("Step 3: 測定データ解析実行")
-        if not st.session_state['pl_slope'] or not st.session_state['pl_center_wl']:
-            st.warning("⚠️ Step 1 (校正係数) と Step 2 (中心波長) の両方を設定してください。")
-        else:
-            slope = st.session_state['pl_slope']
-            cw = st.session_state['pl_center_wl']
-            st.info(f"現在の設定: 係数={slope:.4f}, 中心波長={cw} nm")
-            
-            files = st.file_uploader("測定データファイル(.txt)", accept_multiple_files=True, key="pl_m")
-            if files:
-                fig, ax = plt.subplots(figsize=(10, 6))
-                has_plot = False
-                for f in files:
-                    df = load_pl_data(f)
-                    if df is not None and not df.empty:
-                        df['wl'] = (df['pixel'] - 256.5) * slope + cw
-                        ax.plot(df['wl'], df['intensity'], label=f.name)
-                        has_plot = True
+        if df1 is not None and not df1.empty and df2 is not None and not df2.empty:
+            try:
+                # ピクセル位置の最大強度点を検出
+                p1 = df1.loc[df1['intensity'].idxmax(), 'pixel']
+                p2 = df2.loc[df2['intensity'].idxmax(), 'pixel']
                 
-                if has_plot:
-                    ax.set_xlabel("Wavelength (nm)")
-                    ax.set_ylabel("Intensity (a.u.)")
-                    ax.legend()
-                    ax.grid(True, linestyle='--', alpha=0.7)
-                    st.pyplot(fig)
-                else:
-                    st.warning("プロットできるデータがありませんでした。ファイル形式を確認してください。")
+                if p1 != p2:
+                    # 校正係数を計算し、絶対値をとる (np.absを使用)
+                    slope_raw = (wl2 - wl1) / (p2 - p1)
+                    slope = np.abs(slope_raw)
+                    
+                    st.success(f"✅ 計算された校正係数 (nm/pixel): **{slope:.4f}**")
+                    st.caption(f"（計算値: {slope_raw:.4f} nm/pixel の絶対値を取得しました。）")
+                    
+                    if st.button("この係数を保存してStep 2へ進む", key="save_slope"):
+                        st.session_state['pl_slope'] = slope
+                        st.rerun() 
+                else: 
+                    st.error("ピーク位置が同じです。異なる波長を持つデータを選択してください。")
+            except Exception as e:
+                st.error(f"解析エラー: データ形式を確認してください ({e})")
+        else:
+            st.error("データの読み込みに失敗しました。数値データ（2列）が含まれているか確認してください。")
+
+    st.markdown("---")
+
+    # =========================================================
+    # Step 2: 中心波長の設定
+    # =========================================================
+    st.markdown("## 2️⃣ Step 2: 中心波長の設定")
+    if st.session_state['pl_slope'] is None:
+        st.warning("⚠️ まず Step 1 で校正係数を決定・保存してください。")
+    else:
+        st.success(f"校正係数: {st.session_state['pl_slope']:.4f} nm/pixel が設定されています。")
+        
+        # 中心波長の設定 (セッション状態に保存)
+        center_wl = st.number_input(
+            "分光器の中心波長 (nm) を入力", 
+            value=st.session_state['pl_center_wl'], 
+            key='center_wl_input'
+        )
+        
+        if st.button("中心波長を保存してStep 3へ進む", key="save_center_wl"):
+            st.session_state['pl_center_wl'] = center_wl
+            st.rerun()
+
+    st.markdown("---")
+    
+    # =========================================================
+    # Step 3: 解析実行
+    # =========================================================
+    st.markdown("## 3️⃣ Step 3: 測定データ解析実行")
+    if st.session_state['pl_slope'] is None or st.session_state['pl_center_wl'] is None:
+        st.warning("⚠️ Step 1 (校正係数) と Step 2 (中心波長) の両方を設定してください。")
+    else:
+        slope = st.session_state['pl_slope']
+        cw = st.session_state['pl_center_wl']
+        st.info(f"現在の設定: 係数={slope:.4f}, 中心波長={cw} nm")
+        
+        files = st.file_uploader("測定データファイル(.txt)", accept_multiple_files=True, key="pl_m")
+        if files:
+            fig, ax = plt.subplots(figsize=(10, 6))
+            has_plot = False
+            for f in files:
+                df = load_pl_data(f)
+                if df is not None and not df.empty:
+                    # 波長変換ロジック
+                    # df['pixel'] - 256.5 は、中心ピクセルからの差分 (512ピクセルCCDの中心を256.5として仮定)
+                    df['wl'] = (df['pixel'] - 256.5) * slope + cw
+                    ax.plot(df['wl'], df['intensity'], label=f.name)
+                    has_plot = True
+            
+            if has_plot:
+                ax.set_xlabel("Wavelength (nm)")
+                ax.set_ylabel("Intensity (a.u.)")
+                ax.legend()
+                ax.grid(True, linestyle='--', alpha=0.7)
+                st.pyplot(fig)
+            else:
+                st.warning("プロットできるデータがありませんでした。ファイル形式を確認してください。")
 
 # ---------------------------
 # --- Calendar (修正版) ---
@@ -747,3 +780,4 @@ if __name__ == "__main__":
         pass
         
     main()
+
