@@ -542,6 +542,8 @@ def page_contact_form():
 # ---------------------------
 # --- Analysis Pages ---
 # ---------------------------
+from functools import reduce # reduceを使うため、ファイルの先頭でインポートされていることを確認
+
 def page_iv_analysis():
     st.header("⚡ IVデータ解析")
     
@@ -552,15 +554,18 @@ def page_iv_analysis():
     data_for_export = []
     
     if files:
-        fig, ax = plt.subplots(figsize=(8, 6))
-        has_plot = False
-        
-        for f in files:
-            df = load_data_file(f.getvalue(), f.name)
-            if df is not None:
-                ax.plot(df['Axis_X'], df.iloc[:,1], label=f.name)
-                data_for_export.append(df)
-                has_plot = True
+        # --- データ読み込みとプロット準備 (Spinnerでフィードバック) ---
+        with st.spinner("ファイルを読み込み、グラフを準備中..."):
+            fig, ax = plt.subplots(figsize=(8, 6))
+            has_plot = False
+            
+            for f in files:
+                # load_data_file は、X軸が 'Axis_X'、Y軸がファイル名のDataFrameを返す
+                df = load_data_file(f.getvalue(), f.name)
+                if df is not None:
+                    ax.plot(df['Axis_X'], df.iloc[:,1], label=f.name)
+                    data_for_export.append(df)
+                    has_plot = True
 
         if has_plot:
             # --- 縦軸のスケール設定 ---
@@ -587,10 +592,12 @@ def page_iv_analysis():
             st.subheader("📥 解析結果のエクセル出力")
             
             if data_for_export:
-                merged_df = data_for_export[0].copy()
-                for i in range(1, len(data_for_export)):
-                    merged_df = pd.merge(merged_df, data_for_export[i], on='Axis_X', how='outer')
-            
+                # --- データ統合処理 (Spinnerでフィードバック) ---
+                with st.spinner("Excel出力用にデータを統合中... (ファイル数が多い場合、時間がかかります)"):
+                    # reduceを使って、全てのDataFrameを'Axis_X'を基準に外部結合 (Outer Merge)
+                    # これが処理の重い部分です。
+                    merged_df = reduce(lambda left, right: pd.merge(left, right, on='Axis_X', how='outer'), data_for_export)
+                
                 default_name = datetime.now().strftime("IV_Analysis_%Y%m%d")
                 filename_input = st.text_input("ファイル名 (.xlsx)", value=default_name, key="iv_filename")
                 
@@ -605,7 +612,6 @@ def page_iv_analysis():
                 )
         else:
             st.warning("プロットできるデータがありませんでした。ファイル形式を確認してください。")
-
 def page_pl_analysis():
     st.header("PLデータ解析")
     if 'pl_slope' not in st.session_state: st.session_state['pl_slope'] = None
@@ -827,3 +833,4 @@ if __name__ == "__main__":
         pass
         
     main()
+
