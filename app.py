@@ -409,36 +409,45 @@ def generate_signed_url(gcs_path, expiration_minutes=60):
         return None
         
 # ---------------------------
-# --- GCS へのファイルアップロード ---
+# --- GCS アップロードユーティリティ ---
 # ---------------------------
-def upload_file_to_gcs(uploaded_file, folder_name=""):
-    """StreamlitのアップロードファイルをGCSのルートに保存し、公開URLを返す。"""
-    if isinstance(storage_client, DummyStorageClient) or storage is None:
-        st.warning("GCSクライアントが認証されていません。ファイル保存スキップ。")
+# 【重要】引数を (storage_client_obj, file_obj) の2つに修正しています
+def upload_file_to_gcs(storage_client_obj, file_obj): 
+    """
+    StreamlitのアップロードファイルをGCSのルートに保存し、公開URLを返す。
+    """
+    # 必要なモジュールはファイル上部でインポートされている前提
+    from datetime import datetime
+    from urllib.parse import quote as url_quote
+    
+    # storage はファイル上部でインポートされていると仮定
+    if storage_client_obj is None or storage is None:
+        # GCSクライアントが認証されていない場合は None を返す
         return None, None
 
     try:
-        current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_filename = uploaded_file.name.replace("/", "_").replace("\\", "_")
-
-        # 【修正】フォルダ分けをせず、常にルート ('') に保存する
-        # gcs_filenameにはフォルダ名を含めない
-        gcs_filename = f"{current_time}_{safe_filename}"
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         
-        bucket = storage_client.bucket(CLOUD_STORAGE_BUCKET_NAME)
+        # file_obj は Streamlit UploadedFile であり、.name 属性を持つ
+        original_filename = file_obj.name
+        safe_filename = original_filename.replace(' ', '_').replace('/', '_')
+        # フォルダ分けをせず、常にGCSのルートに保存
+        gcs_filename = f"{timestamp}_{safe_filename}"
+
+        # CLOUD_STORAGE_BUCKET_NAME はグローバルに定義されていると仮定
+        bucket = storage_client_obj.bucket(CLOUD_STORAGE_BUCKET_NAME)
         blob = bucket.blob(gcs_filename)
 
         # ファイルをメモリからアップロード
-        blob.upload_from_file(uploaded_file, rewind=True)
-        
-        # make_public() は不要。非公開のまま、既存の認証済みロジックでアクセスする
-        
-        # 公開URLを生成
-        public_url = f"https://storage.googleapis.com/{CLOUD_STORAGE_BUCKET_NAME}/{url_quote(gcs_filename)}"
-        
-        return gcs_filename, public_url
+        file_bytes = file_obj.getvalue()
+        blob.upload_from_string(file_bytes, content_type=file_obj.type if hasattr(file_obj, 'type') else 'application/octet-stream')
 
+        # 非公開のまま、認証済みアクセスが可能な公開URLを生成
+        public_url = f"https://storage.googleapis.com/{CLOUD_STORAGE_BUCKET_NAME}/{url_quote(gcs_filename)}"
+        return original_filename, public_url
+        
     except Exception as e:
+        # このエラーは発生源が GCS クライアントではないため、詳細なエラーを返す
         st.error(f"GCSへのアップロード中にエラーが発生しました: {e}")
         return None, None
 
@@ -1600,6 +1609,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
