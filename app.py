@@ -717,7 +717,6 @@ def page_epi_note_recording():
         memo_content = f"{ep_title}\n{ep_memo}"
         
         EPI_COL_NOTE_TYPE = "エピノート" 
-        SHEET_EPI_DATA = "エピノート"   
         
         # 【6列構成】: タイムスタンプ, ノート種別, カテゴリ, メモ, ファイル名, 写真URL
         row_data = [timestamp, EPI_COL_NOTE_TYPE, ep_category, memo_content, filenames_json, urls_json]
@@ -820,8 +819,7 @@ def page_mainte_recording():
         # 【5列構成に合わせるため】: 装置情報はメモに統合し、独立した列としては書き込まない
         memo_to_save = f"[{mainte_title}] (対象装置: {mainte_device})\n{memo_content}"
         
-        MAINTE_COL_NOTE_TYPE = "メンテノート" 
-        SHEET_MAINTE_DATA = "メンテノート"   
+        MAINTE_COL_NOTE_TYPE = "メンテノート"  
         
         # 【5列構成】: タイムスタンプ, ノート種別, メモ, ファイル名, 写真URL
         row_data = [timestamp, MAINTE_COL_NOTE_TYPE, memo_to_save, filenames_json, urls_json]
@@ -1609,6 +1607,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
