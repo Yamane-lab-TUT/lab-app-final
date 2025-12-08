@@ -460,6 +460,110 @@ def display_attached_files(row_dict, col_url_key, col_filename_key=None):
     except Exception as e:
         st.error(f"添付ファイルの表示に失敗しました: {e}")
 
+# ---------------------------
+# --- GCS ファイルリスト取得ユーティリティ ---
+# ---------------------------
+def get_note_files_from_gcs(folder_type):
+    """
+    指定されたフォルダタイプに対応するGCSパスからファイルリストを取得する。
+    ルート ('')、ep_notes/、mainte_notes/ の複数パスを検索する。
+    Returns: list of (file_name, full_gcs_path, public_url)
+    """
+    if isinstance(storage_client, DummyStorageClient) or storage is None:
+        st.info("GCSクライアントが認証されていません。")
+        return []
+
+    search_prefixes = []
+    if folder_type == "エピノート":
+        # ルート ('') と ep_notes/ の両方を検索
+        search_prefixes = ["", "ep_notes/"] 
+    elif folder_type == "メンテノート":
+        # ルート ('') と mainte_notes/ の両方を検索
+        search_prefixes = ["", "mainte_notes/"] 
+    # その他のタイプも必要に応じて追加
+
+    all_files = {} # {表示名: (フルパス, URL)}
+
+    try:
+        bucket = storage_client.bucket(CLOUD_STORAGE_BUCKET_NAME)
+        
+        for prefix in search_prefixes:
+            # GCS Blobオブジェクトのリストを取得
+            blobs = bucket.list_blobs(prefix=prefix)
+            
+            for blob in blobs:
+                # フォルダ自体（例: 'ep_notes/'）は除外
+                if blob.name.endswith('/'):
+                    continue
+                
+                # ファイル名を取得 (prefix部分を削除)
+                file_name_display = blob.name.replace(prefix, '')
+                
+                # ルート直下のファイルの場合
+                if not file_name_display and prefix == "":
+                     file_name_display = blob.name
+
+                # public_urlを作成 (url_quoteを使用)
+                public_url = f"https://storage.googleapis.com/{CLOUD_STORAGE_BUCKET_NAME}/{url_quote(blob.name)}"
+                
+                # 同じファイル名が見つかった場合、新しいパス（通常はサブフォルダ）を優先
+                if file_name_display not in all_files:
+                    all_files[file_name_display] = (blob.name, public_url)
+
+        # ファイル名でソートして返す (list of (file_name, full_gcs_path, public_url))
+        # ファイル名順の降順で、新しいファイル（通常は新しいタイムスタンプ）が上に来るようにする
+        return sorted([
+            (name, path_url[0], path_url[1]) 
+            for name, path_url in all_files.items()
+        ], key=lambda x: x[0], reverse=True) 
+
+    except Exception as e:
+        st.error(f"GCSファイルリストの取得中にエラーが発生しました: {e}")
+        return []
+
+# ---------------------------
+# --- GCSファイル閲覧機能 ---
+# ---------------------------
+def display_gcs_files(folder_type):
+    st.markdown("#### 📂 GCS ファイルブラウザ (直接ファイル一覧)")
+    st.caption(f"GCSバケット ({CLOUD_STORAGE_BUCKET_NAME}) のルートと /{folder_type}/ フォルダからファイルを検索しています。")
+    
+    file_list = get_note_files_from_gcs(folder_type)
+
+    if not file_list:
+        st.info("GCSからファイルが見つかりませんでした。")
+        return
+        
+    selected_file_name = st.selectbox(
+        f"GCS内のファイルを選択 (合計 {len(file_list)} 件)", 
+        options=[item[0] for item in file_list],
+        key=f"{folder_type}_gcs_browser"
+    )
+    
+    if selected_file_name:
+        # 選択されたファイルの情報を検索
+        selected_info = next((item for item in file_list if item[0] == selected_file_name), None)
+        
+        if selected_info:
+            file_name, gcs_path, url = selected_info
+            
+            # `display_attached_files` と同様の表示ロジックを使用
+            st.markdown("---")
+            st.markdown(f"**ファイル名:** `{file_name}`")
+            st.markdown(f"**GCSパス:** `{gcs_path}`")
+            
+            # `display_attached_files` に合わせるため、擬似的な row_dict を作成
+            pseudo_row = {
+                'url': json.dumps([url]), 
+                'filename': json.dumps([file_name])
+            }
+            
+            # ファイル表示ユーティリティを再利用
+            # display_attached_files(row_dict, col_url_key, col_filename_key)
+            display_attached_files(pseudo_row, 'url', 'filename')
+        else:
+            st.error("ファイル情報が見つかりません。")
+
 def page_epi_note_list():
     detail_cols = [EPI_COL_TIMESTAMP, EPI_COL_CATEGORY, EPI_COL_NOTE_TYPE, EPI_COL_MEMO, EPI_COL_FILENAME]
     page_data_list(
@@ -625,11 +729,16 @@ def page_epi_note_list():
 def page_epi_note():
     st.header("エピノート機能")
     st.markdown("---")
-    tab = st.radio("表示切替", ["📝 記録", "📚 一覧"], key="epi_tab", horizontal=True)
+    # 既存のtabを修正し、「GCS閲覧」を追加
+    tab_titles = ["📝 記録", "📚 一覧 (シート)", "📂 GCSファイル閲覧"]
+    tab = st.radio("表示切替", tab_titles, key="epi_tab", horizontal=True)
+    
     if tab == "📝 記録":
         page_epi_note_recording()
-    else:
+    elif tab == "📚 一覧 (シート)":
         page_epi_note_list()
+    elif tab == "📂 GCSファイル閲覧":
+        display_gcs_files("エピノート") # 新規追加
 
 # ---------------------------
 # --- メンテノートページ ---
@@ -684,11 +793,16 @@ def page_mainte_list():
 def page_mainte_note():
     st.header("メンテノート機能")
     st.markdown("---")
-    tab = st.radio("表示切替", ["📝 記録", "📚 一覧"], key="mainte_tab", horizontal=True)
+    # 既存のtabを修正し、「GCS閲覧」を追加
+    tab_titles = ["📝 記録", "📚 一覧 (シート)", "📂 GCSファイル閲覧"]
+    tab = st.radio("表示切替", tab_titles, key="mainte_tab", horizontal=True)
+    
     if tab == "📝 記録":
         page_mainte_recording()
-    else:
+    elif tab == "📚 一覧 (シート)":
         page_mainte_list()
+    elif tab == "📂 GCSファイル閲覧":
+        display_gcs_files("メンテノート") # 新規追加
 
 # ---------------------------
 # --- 議事録ページ ---
@@ -1434,6 +1548,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
