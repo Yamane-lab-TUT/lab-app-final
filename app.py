@@ -356,6 +356,29 @@ def combine_dataframes(dataframes, filenames, num_points=500):
     return combined_df
 
 # ---------------------------
+# --- 添付ファイル表示ユーティリティ ---
+# ---------------------------
+def display_attached_files(row_dict, col_url_key, col_filename_key):
+    """
+    指定された行データから添付ファイル（URLとファイル名）を抽出し、リンクとして表示する。
+    """
+    try:
+        urls = json.loads(row_dict.get(col_url_key, '[]'))
+        filenames = json.loads(row_dict.get(col_filename_key, '[]'))
+    except (json.JSONDecodeError, AttributeError):
+        urls = []
+        filenames = []
+
+    if urls:
+        st.markdown("##### 📎 添付ファイル")
+        for url, filename in zip(urls, filenames):
+            # 非公開ファイルの場合、署名付きURLが必要なケースがあるため、
+            # 閲覧できない場合は、URLをそのまま表示する方が安全
+            st.markdown(f"[{filename}]({url})")
+    else:
+        st.markdown("添付ファイルはありません。")
+        
+# ---------------------------
 # --- 署名付きURL生成ユーティリティ ---
 # ---------------------------
 def generate_signed_url(gcs_path, expiration_minutes=60):
@@ -1582,6 +1605,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
