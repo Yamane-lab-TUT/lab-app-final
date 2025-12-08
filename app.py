@@ -44,7 +44,7 @@ except Exception:
 # ---------------------------
 # --- 定数（グローバル変数） ---
 # ---------------------------
-SPREADSHEET_NAME = "エピノート (2).xlsx" 
+SPREADSHEET_NAME = "エピノート.xlsx" 
 
 # 各シート名
 SHEET_EPI_DATA = "エピノート_データ"   
@@ -710,3 +710,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
