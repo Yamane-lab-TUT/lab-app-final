@@ -389,9 +389,12 @@ def page_data_list(sheet_name, title, col_time, col_filter, col_memo, col_url, d
 # ---------------------------
 def page_iv_analysis():
     st.header("⚡ IVデータ解析")
+    
+    # --- 対数表示切り替えチェックボックス ---
+    use_log_scale = st.checkbox("縦軸（電流）を対数表示にする", key="iv_log_scale")
+    
     files = st.file_uploader("IVファイル(.txt)", accept_multiple_files=True)
     
-    # Excel出力のためにデータを保持
     data_for_export = []
     
     if files:
@@ -399,38 +402,46 @@ def page_iv_analysis():
         has_plot = False
         
         for f in files:
-            # load_data_file は、X軸が 'Axis_X'、Y軸がファイル名のDataFrameを返す
             df = load_data_file(f.getvalue(), f.name)
             if df is not None:
-                # プロット
+                # 対数表示の場合、電流値が負またはゼロのデータはプロットできないため、ここではそのまま保持
                 ax.plot(df['Axis_X'], df.iloc[:,1], label=f.name)
                 data_for_export.append(df)
                 has_plot = True
 
         if has_plot:
+            # --- 縦軸のスケール設定 ---
+            if use_log_scale:
+                # 対数表示の場合、データが正である必要があるため、エラーを避けるために設定
+                ax.set_yscale('log')
+                st.warning("⚠️ 対数表示では、電流値がゼロまたは負の値のデータは表示されません。")
+            else:
+                ax.set_yscale('linear')
+            
             # --- プロットの整形 ---
-            ax.axhline(0, color='gray', linestyle='--', linewidth=1) # Y=0 (電流ゼロ)
+            # ゼロ線は、リニアスケールでのみ意味を持つため、Log Scaleの場合は省略または注意深く扱う必要があります。
+            # ただし、今回はX=0線のみ残し、Y=0線は対数スケールでは描画しないようにします。
+            
+            if not use_log_scale:
+                 ax.axhline(0, color='gray', linestyle='--', linewidth=1) # Y=0 (電流ゼロ)
+            
             ax.axvline(0, color='gray', linestyle='--', linewidth=1) # X=0 (電圧ゼロ)
+            
             ax.set_xlabel("Voltage")
             ax.set_ylabel("Current")
             ax.legend()
             ax.grid(True, linestyle=':', alpha=0.5)
             st.pyplot(fig)
             
-            # --- Excel ダウンロード ---
+            # --- Excel ダウンロード (変更なし) ---
             st.markdown("---")
             st.subheader("📥 解析結果のエクセル出力")
             
-            # データ統合 (Axis_Xで結合)
             if data_for_export:
-                # 最初のDataFrameをベースにする
                 merged_df = data_for_export[0].copy()
-                
-                # 残りのDataFrameをマージ
                 for i in range(1, len(data_for_export)):
                     merged_df = pd.merge(merged_df, data_for_export[i], on='Axis_X', how='outer')
             
-                # ファイル名入力
                 default_name = datetime.now().strftime("IV_Analysis_%Y%m%d")
                 filename_input = st.text_input("ファイル名 (.xlsx)", value=default_name, key="iv_filename")
                 
@@ -445,7 +456,6 @@ def page_iv_analysis():
                 )
         else:
             st.warning("プロットできるデータがありませんでした。ファイル形式を確認してください。")
-
 def page_pl_analysis():
     st.header("PLデータ解析")
     if 'pl_slope' not in st.session_state: st.session_state['pl_slope'] = None
@@ -675,3 +685,4 @@ if __name__ == "__main__":
         pass
         
     main()
+
