@@ -313,7 +313,7 @@ def load_pl_data(uploaded_file):
         return None
         
 # ---------------------------
-# --- NEW: General Graph Plotting Page (Dual Axis & Zero-Axis Default ON) ---
+# --- NEW: General Graph Plotting Page (Key Error Fixed Edition) ---
 # ---------------------------
 def page_graph_plotting():
     st.header("📈 高機能グラフ描画")
@@ -473,23 +473,25 @@ def page_graph_plotting():
             font_family_name = st.selectbox("フォント名", ["Times New Roman", "Arial", "Helvetica", "Hiragino Maru Gothic Pro", "Meiryo", "Yu Gothic"], index=0, key="font_fam")
             base_font_size = st.number_input("基本フォントサイズ", 6, 50, 14, key="font_size")
 
-        # --- 軸設定 (4軸対応) ---
+        # --- 軸設定 (キー重複修正済み) ---
         with st.expander("📐 軸 (Axes) と グリッド", expanded=True):
-            # タブを4軸＋共通設定に分割
             tabs_ax = st.tabs(["X軸(下)", "X軸(上)", "Y軸(左)", "Y軸(右)", "共通"])
-            
-            # 設定保持用の辞書
             ax_settings = {}
 
-            # Helper for Axis Settings
+            # ★ 修正済みヘルパー関数: key名を明確化 ★
             def axis_ui(key_prefix, label_def):
                 label = st.text_input("ラベル", label_def, key=f"{key_prefix}_lbl")
                 c1, c2 = st.columns(2)
-                d_min = c1.number_input("最小 (0=Auto)", 0.0, key=f"{key_prefix}_min")
-                d_max = c2.number_input("最大 (0=Auto)", 0.0, key=f"{key_prefix}_max")
+                # _axis_min に変更して _minor_tick との重複を回避
+                d_min = c1.number_input("最小 (0=Auto)", 0.0, key=f"{key_prefix}_axis_min")
+                d_max = c2.number_input("最大 (0=Auto)", 0.0, key=f"{key_prefix}_axis_max")
+                
                 c3, c4 = st.columns(2)
-                maj_int = c3.number_input("主目盛間隔 (0=Auto)", 0.0, step=0.1, key=f"{key_prefix}_maj")
-                min_int = c4.number_input("補助目盛間隔 (0=Auto)", 0.0, step=0.1, key=f"{key_prefix}_min")
+                # _maj_tick に変更
+                maj_int = c3.number_input("主目盛間隔 (0=Auto)", 0.0, step=0.1, key=f"{key_prefix}_maj_tick")
+                # _minor_tick に変更
+                min_int = c4.number_input("補助目盛間隔 (0=Auto)", 0.0, step=0.1, key=f"{key_prefix}_minor_tick")
+                
                 is_log = st.checkbox("対数 (Log)", False, key=f"{key_prefix}_log")
                 is_inv = st.checkbox("反転", False, key=f"{key_prefix}_inv")
                 return {"label": label, "min": d_min, "max": d_max, "maj": maj_int, "min_int": min_int, "log": is_log, "inv": is_inv}
@@ -502,7 +504,7 @@ def page_graph_plotting():
             with tabs_ax[4]:
                 tick_dir = st.selectbox("目盛の向き", ["in", "out", "inout"], index=0, key="tick_dir")
                 show_grid = st.checkbox("グリッド線を表示", False, key="show_grid") 
-                # デフォルトTrueに変更
+                # デフォルトTrue
                 zero_axis = st.checkbox("0点で軸を交差させる (X=0, Y=0)", True, key="zero_axis")
 
         with st.expander("📝 凡例 (Legend)"):
@@ -526,9 +528,9 @@ def page_graph_plotting():
                 st.markdown(f"**📂 {d['name']}**")
                 cols = d['df'].columns.tolist()
                 
-                x_col = st.selectbox(f"X列 ({i})", cols, index=0, key=f"x_sel_{i}")
+                x_col = st.selectbox(f"X軸 ({i})", cols, index=0, key=f"x_sel_{i}")
                 default_ys = cols[1:] if len(cols) > 1 else []
-                y_cols = st.multiselect(f"Y列", cols, default=default_ys, key=f"y_sel_{i}")
+                y_cols = st.multiselect(f"Y軸", cols, default=default_ys, key=f"y_sel_{i}")
                 
                 if y_cols:
                     st.markdown("👇 **系列ごとのスタイル設定**")
@@ -542,11 +544,9 @@ def page_graph_plotting():
                             label_txt = c1.text_input("凡例ラベル", value=y_name, key=f"lbl_{uid}")
                             color_val = c2.color_picker("色", value=def_color, key=f"col_{uid}")
                             
-                            # --- 軸の割り当て設定 ---
                             c3, c4 = st.columns(2)
-                            # X軸の選択 (下 or 上)
+                            # 軸の選択
                             target_x = c3.radio("X軸の配置", ["下 (Bottom)", "上 (Top)"], index=0, horizontal=True, key=f"tx_{uid}")
-                            # Y軸の選択 (左 or 右)
                             target_y = c4.radio("Y軸の配置", ["左 (Left)", "右 (Right)"], index=0, horizontal=True, key=f"ty_{uid}")
                             
                             c5, c6 = st.columns(2)
@@ -578,7 +578,6 @@ def page_graph_plotting():
     with col_preview:
         st.subheader("プレビュー")
         
-        # Font Config
         plt.rcParams['font.size'] = base_font_size
         if font_family_name in ["Times New Roman", "Hiragino Maru Gothic Pro", "Meiryo"]:
             plt.rcParams['font.family'] = 'serif'
@@ -590,34 +589,18 @@ def page_graph_plotting():
         fig, ax1 = plt.subplots(figsize=(fig_w, fig_h), dpi=dpi_val)
         ax1.margins(0)
 
-        # --- 軸オブジェクトの管理 ---
-        # ax1: Bottom, Left (Main)
-        # 必要な場合のみ Twin を作成
-        ax2 = None # Right (shares x with ax1)
-        ax3 = None # Top (shares y with ax1)
-        ax4 = None # Top, Right (complex)
-
-        # どの軸が必要か判定
+        ax2 = None; ax3 = None; ax4 = None
         need_right = any("右" in c['target_y'] for c in final_plot_configs)
         need_top = any("上" in c['target_x'] for c in final_plot_configs)
         
         if need_right: ax2 = ax1.twinx()
         if need_top: ax3 = ax1.twiny()
-        # Top-Rightが必要な場合（上軸と右軸の両方を使うデータがある場合）
-        # ax2(Right)に対してtwiny()すれば、Yは右軸共有、Xは上軸（独立）になる
-        # ax3(Top)に対してtwinx()すれば、Xは上軸共有、Yは右軸（独立）になる
-        # ここでは「上軸」は1つのスケール、「右軸」も1つのスケールと仮定して同期させる
         if need_right and need_top:
             ax4 = ax2.twiny()
-            # ax4のX軸はax3(Top)と同期、Y軸はax2(Right)と同期している状態にしたい
-            # ax4 = ax2.twiny() -> Y is shared with ax2 (Right). X is independent (Top).
-            # We explicitly link ax4's X axis to ax3's X axis.
             ax4.get_shared_x_axes().join(ax4, ax3)
 
-        # 軸設定の適用関数
         def apply_axis_settings(ax, x_key, y_key):
             if ax is None: return
-            # X Axis
             ax.set_xlabel(ax_settings[x_key]['label'])
             if ax_settings[x_key]['log']: ax.set_xscale('log')
             if ax_settings[x_key]['inv']: ax.invert_xaxis()
@@ -629,7 +612,6 @@ def page_graph_plotting():
             if ax_settings[x_key]['maj'] > 0: ax.xaxis.set_major_locator(ticker.MultipleLocator(ax_settings[x_key]['maj']))
             if ax_settings[x_key]['min_int'] > 0: ax.xaxis.set_minor_locator(ticker.MultipleLocator(ax_settings[x_key]['min_int']))
 
-            # Y Axis
             ax.set_ylabel(ax_settings[y_key]['label'])
             if ax_settings[y_key]['log']: ax.set_yscale('log')
             if ax_settings[y_key]['inv']: ax.invert_yaxis()
@@ -641,33 +623,23 @@ def page_graph_plotting():
             if ax_settings[y_key]['maj'] > 0: ax.yaxis.set_major_locator(ticker.MultipleLocator(ax_settings[y_key]['maj']))
             if ax_settings[y_key]['min_int'] > 0: ax.yaxis.set_minor_locator(ticker.MultipleLocator(ax_settings[y_key]['min_int']))
 
-            # Ticks
             ax.tick_params(which='major', direction=tick_dir, width=1.0, length=6.0)
             ax.tick_params(which='minor', direction=tick_dir, width=0.8, length=3.0)
-            if tick_dir == 'in':
-                # 内向きの場合、反対側にも目盛を出すか？
-                # 複数軸ある場合は煩雑になるので、その軸の担当サイドだけにするのが無難だが、
-                # 要望があれば top=True 等を追加。ここではデフォルト動作。
-                pass
 
-        # プロットループ
         for cfg in final_plot_configs:
-            # ターゲット軸の決定
             is_top = "上" in cfg['target_x']
             is_right = "右" in cfg['target_y']
-            
-            target_ax = ax1 # default Bottom-Left
+            target_ax = ax1
             if is_top and is_right: target_ax = ax4
             elif is_top: target_ax = ax3
             elif is_right: target_ax = ax2
             
-            if target_ax is None: continue # Should not happen if logic matches creation
+            if target_ax is None: continue
 
             df_plot = cfg['df']
             x_data = df_plot[cfg['x']]
             y_data = df_plot[cfg['y']]
             
-            # Error Bars
             yerr = None
             if cfg['ep_mode'] == "なし": ep = np.zeros_like(y_data)
             elif cfg['ep_mode'] == "手入力 (固定値)": ep = np.full_like(y_data, cfg['ep_val'])
@@ -689,43 +661,34 @@ def page_graph_plotting():
                 target_ax.plot(x_data, y_data, label=cfg['label'], color=cfg['color'],
                         marker=cfg['marker'], linestyle=ls_arg, markersize=6, linewidth=1.5)
 
-        # 設定適用
         apply_axis_settings(ax1, 'x1', 'y1')
-        if ax2: apply_axis_settings(ax2, 'x1', 'y2') # ax2 shares X1
-        if ax3: apply_axis_settings(ax3, 'x2', 'y1') # ax3 shares Y1
-        if ax4: apply_axis_settings(ax4, 'x2', 'y2') # ax4 shares nothing with ax1 direct, but logic handles it
+        if ax2: apply_axis_settings(ax2, 'x1', 'y2')
+        if ax3: apply_axis_settings(ax3, 'x2', 'y1')
+        if ax4: apply_axis_settings(ax4, 'x2', 'y2')
 
-        # Grid (Main Axis Only)
         if show_grid: ax1.grid(True, which='major', linestyle='-', alpha=0.6)
         else: ax1.grid(False, which='major')
         ax1.grid(False, which='minor')
 
-        # Zero Axis (Main Axis Only)
         if zero_axis:
-            # 常に表示 (範囲外でもエラーにはならない)
             ax1.axhline(0, color='black', linewidth=1.0, zorder=1)
             ax1.axvline(0, color='black', linewidth=1.0, zorder=1)
 
-        # 凡例 (統合)
         if show_legend:
             lines = []
             labels = []
-            # 全ての軸からハンドルを取得
             for ax in [ax1, ax2, ax3, ax4]:
                 if ax is not None:
                     l, lb = ax.get_legend_handles_labels()
                     lines.extend(l)
                     labels.extend(lb)
             
-            # 重複除去 (必要なら) -> ここではそのまま
-            
             bbox = None
             loc_arg = legend_loc
             if legend_loc == "outside right":
                 loc_arg = "center left"
-                bbox = (1.15, 0.5) # 右軸があるため少し離す
+                bbox = (1.15, 0.5)
             
-            # 凡例はax1にまとめて描画
             ax1.legend(lines, labels,
                 loc=loc_arg, bbox_to_anchor=bbox, ncol=legend_cols,
                 fontsize=legend_fontsize, frameon=legend_frame,
@@ -1206,6 +1169,7 @@ if __name__ == "__main__":
     except Exception:
         pass
     main()
+
 
 
 
