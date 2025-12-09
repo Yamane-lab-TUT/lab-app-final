@@ -313,101 +313,121 @@ def load_pl_data(uploaded_file):
         return None
 
 # ---------------------------
-# --- NEW: General Graph Plotting Page (文字コード対応強化版) ---
-# ---------------------------
-# ---------------------------
-# --- NEW: General Graph Plotting Page (文字コード/区切り文字対応強化版) ---
+# --- NEW: General Graph Plotting Page (コピペ入力対応版) ---
 # ---------------------------
 def page_graph_plotting():
     st.header("📈 高機能グラフ描画")
     st.markdown("論文・レポート用の美しいグラフを作成します。詳細設定が可能です。")
 
-    # 1. データのアップロード
-    st.subheader("1. データの選択")
-    files = st.file_uploader("テキスト/CSVファイルを選択 (複数可)", accept_multiple_files=True, key="gp_uploader")
+    # データを格納するリスト
+    data_list = []
+
+    # --- 1. データ入力セクション ---
+    st.subheader("1. データの入力")
     
-    if not files:
-        st.info("ファイルをアップロードすると設定メニューが表示されます。")
+    tab1, tab2 = st.tabs(["📂 ファイルから読み込み", "📋 テキストを貼り付け (Excelから)"])
+
+    # === Tab 1: ファイルアップロード ===
+    with tab1:
+        files = st.file_uploader("テキスト/CSVファイルを選択 (複数可)", accept_multiple_files=True, key="gp_uploader")
+        
+        if files:
+            encodings_to_try = ['utf-8', 'shift_jis', 'cp932', 'euc_jp']
+            for f in files:
+                df = None
+                success = False
+                raw_bytes = f.getvalue() 
+                
+                # 文字コード判定
+                decoded_content = None
+                for enc in encodings_to_try:
+                    try:
+                        decoded_content = raw_bytes.decode(enc)
+                        success = True
+                        break
+                    except Exception:
+                        continue
+
+                if not success or decoded_content is None:
+                    st.error(f"❌ {f.name} の読み込みに失敗しました。")
+                    continue
+
+                # データ抽出
+                lines = [l.strip() for l in decoded_content.splitlines() if l.strip() and not l.strip().startswith(('#','!','/'))]
+                if not lines: continue
+
+                # ヘッダー判定
+                header_opt = 'infer'
+                first_line_parts = lines[0].split()
+                if first_line_parts:
+                    first_val = first_line_parts[0].replace(',', '') 
+                    if first_val.replace('.', '', 1).replace('-', '', 1).isdigit():
+                        header_opt = None
+                
+                # 読み込み試行
+                read_success = False
+                try:
+                    df = pd.read_csv(io.StringIO("\n".join(lines)), sep=',', engine='python', header=header_opt)
+                    read_success = True
+                except:
+                    try:
+                        df = pd.read_csv(io.StringIO("\n".join(lines)), sep=r'[\t ]+', engine='python', header=header_opt)
+                        read_success = True
+                    except: pass
+
+                if read_success and df is not None and not df.empty:
+                    # 列名のクリーニング
+                    if all(isinstance(col, int) for col in df.columns):
+                        df.columns = [f"Col {i+1}" for i in range(df.shape[1])]
+                    df.columns = [str(c).strip() for c in df.columns]
+                    
+                    data_list.append({"name": f.name, "df": df})
+
+    # === Tab 2: コピー＆ペースト入力 ===
+    with tab2:
+        st.info("Excelのセル範囲をコピーして、ここに貼り付けてください（Ctrl+V）。")
+        paste_text = st.text_area("データ貼り付けエリア", height=200, placeholder="ここにデータを貼り付け...")
+        paste_name = st.text_input("データ名 (凡例用)", value="Pasted Data")
+
+        if paste_text:
+            try:
+                # Excelからのコピペは通常タブ区切りだが、スペースやカンマも許容する
+                lines = [l.strip() for l in paste_text.splitlines() if l.strip() and not l.strip().startswith(('#','!','/'))]
+                
+                if lines:
+                    # ヘッダー判定
+                    header_opt = 'infer'
+                    first_line_parts = lines[0].split()
+                    if first_line_parts:
+                        first_val = first_line_parts[0].replace(',', '')
+                        if first_val.replace('.', '', 1).replace('-', '', 1).isdigit():
+                            header_opt = None
+
+                    # 読み込み
+                    df_paste = pd.read_csv(io.StringIO("\n".join(lines)), sep=r'[\t, ]+', engine='python', header=header_opt)
+                    
+                    if df_paste is not None and not df_paste.empty:
+                        # 列名のクリーニング
+                        if all(isinstance(col, int) for col in df_paste.columns):
+                            df_paste.columns = [f"Col {i+1}" for i in range(df_paste.shape[1])]
+                        df_paste.columns = [str(c).strip() for c in df_paste.columns]
+
+                        data_list.append({"name": paste_name, "df": df_paste})
+                        st.success(f"✅ データを読み込みました: {df_paste.shape[0]}行, {df_paste.shape[1]}列")
+                    else:
+                        st.warning("有効なデータとして認識できませんでした。")
+            except Exception as e:
+                st.error(f"読み込みエラー: {e}")
+
+    # --- データがない場合はここで終了 ---
+    if not data_list:
         return
 
-    # 読み込み処理
-    data_list = []
-    # 試行する文字コードのリスト (順に試す)
-    encodings_to_try = ['utf-8', 'shift_jis', 'cp932', 'euc_jp']
-
-    for f in files:
-        df = None
-        success = False
-        # ファイル全体をバイトデータとして読み込む
-        raw_bytes = f.getvalue() 
-        
-        # 1. バイトデータを複数の文字コードでデコードを試みる
-        decoded_content = None
-        for enc in encodings_to_try:
-            try:
-                decoded_content = raw_bytes.decode(enc)
-                success = True
-                break
-            except Exception:
-                continue
-
-        if not success or decoded_content is None:
-            st.error(f"❌ {f.name} の読み込みに失敗しました。文字コードが特殊な形式である可能性があります。")
-            continue
-
-        # 2. デコードされたコンテンツからデータ行を抽出 (コメント行除去)
-        lines = [l.strip() for l in decoded_content.splitlines() if l.strip() and not l.strip().startswith(('#','!','/'))]
-        if not lines:
-            st.warning(f"⚠️ {f.name} にプロットできるデータ行が見つかりませんでした。")
-            continue
-
-        # 3. ヘッダー判定 (1行目が数字で始まらないならヘッダーとみなす)
-        header_opt = 'infer'
-        first_line_parts = lines[0].split()
-        if first_line_parts:
-            # 最初の要素が数値に見えるか判定 (マイナス、小数点も考慮)
-            first_val = first_line_parts[0].replace(',', '') 
-            if first_val.replace('.', '', 1).replace('-', '', 1).isdigit():
-                header_opt = None # ヘッダーなし
-        
-        # 4. 読み込み試行（区切り文字の優先順位付け）
-        read_success = False
-        
-        # Try A: 厳密なカンマ区切り (Excel出力CSVの標準) を最優先
-        try:
-            df = pd.read_csv(io.StringIO("\n".join(lines)), sep=',', engine='python', header=header_opt)
-            read_success = True
-        except Exception:
-             # Try B: スペースまたはタブ区切り (テキスト/DATファイルの標準)
-            try:
-                df = pd.read_csv(io.StringIO("\n".join(lines)), sep=r'[\t ]+', engine='python', header=header_opt)
-                read_success = True
-            except Exception:
-                pass # Try Bも失敗
-
-        if not read_success or df is None or df.empty or df.shape[1] < 2:
-            st.error(f"❌ {f.name} のデータ解析に失敗しました。データが数値形式で2列以上あるか、列数が一定か確認してください。")
-            continue
-
-        # 5. 後処理
-        # 列名が数字の連番になっている場合、わかりやすくリネーム
-        if all(isinstance(col, int) for col in df.columns):
-            cols = [f"Col {i+1}" for i in range(df.shape[1])]
-            df.columns = cols
-        
-        # 列名の余分な空白を削除
-        df.columns = [str(c).strip() for c in df.columns]
-        
-        data_list.append({"name": f.name, "df": df})
-
-    if not data_list: return
-
-    # --- 左サイドバー風の設定エリア (Expander) ---
+    # --- 2. グラフ詳細設定 (既存コードと同じ) ---
+    st.markdown("### 2. グラフ詳細設定")
+    
     col_settings, col_preview = st.columns([1, 2])
 
-    # (以降の描画設定、プレビュー、ダウンロード部分は前回のコードと同じです)
-    # ... (前回のコードの `with col_settings:` から最後までをそのまま継続してください)
-    
     with col_settings:
         with st.expander("📊 キャンバスとフォント (全体)", expanded=True):
             fig_w = st.number_input("幅 (inch)", 1.0, 50.0, 8.0, step=0.5)
@@ -445,8 +465,7 @@ def page_graph_plotting():
             
             plot_configs = []
             for i, d in enumerate(data_list):
-                st.markdown(f"**File: {d['name']}**")
-                # 列選択
+                st.markdown(f"**Data: {d['name']}**")
                 cols = d['df'].columns.tolist()
                 c1, c2, c3 = st.columns(3)
                 default_x = 0
@@ -455,13 +474,11 @@ def page_graph_plotting():
                 x_col = c1.selectbox(f"X列 ({i})", cols, index=default_x, key=f"x_{i}")
                 y_col = c2.selectbox(f"Y列 ({i})", cols, index=default_y, key=f"y_{i}")
                 
-                # エラーバー設定
                 use_error = c3.checkbox(f"エラーバー ({i})", False, key=f"use_err_{i}")
                 y_err_col = None
                 if use_error:
                     y_err_col = st.selectbox(f"Y誤差列 ({i})", ["定数(5%)"] + cols, key=f"yerr_{i}")
                 
-                # スタイル
                 cc1, cc2, cc3 = st.columns(3)
                 color = cc1.color_picker(f"色 ({i})", value=["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"][i%5], key=f"col_{i}")
                 marker = cc2.selectbox(f"マーカー ({i})", ["None", "o", "s", "^", "D", "x"], index=0, key=f"mark_{i}")
@@ -487,11 +504,10 @@ def page_graph_plotting():
             ann_x = st.number_input("X座標", value=0.0)
             ann_y = st.number_input("Y座標", value=0.0)
 
-    # --- 描画実行 ---
+    # --- 3. 描画実行 (プレビュー) ---
     with col_preview:
         st.subheader("プレビュー")
         
-        # キャンバス作成
         fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=dpi_val)
         
         for cfg in plot_configs:
@@ -499,13 +515,11 @@ def page_graph_plotting():
             x_data = df[cfg['x']]
             y_data = df[cfg['y']]
             
-            # マーカーサイズなどの微調整
             ms = 6
             lw = 1.5
             if cfg['marker'] == 'None': cfg['marker'] = None
-            if cfg['linestyle'] == 'None': cfg['linestyle'] = 'None' # Scatter用
+            if cfg['linestyle'] == 'None': cfg['linestyle'] = 'None'
             
-            # エラーバー処理
             if cfg.get('y_err'):
                 if cfg['y_err'] == "定数(5%)":
                     y_err = y_data * 0.05
@@ -517,13 +531,11 @@ def page_graph_plotting():
                             marker=cfg['marker'], linestyle=cfg['linestyle'],
                             capsize=4, markersize=ms, linewidth=lw)
             else:
-                # 通常プロット
                 ax.plot(x_data, y_data, 
                         label=cfg['label'], color=cfg['color'],
                         marker=cfg['marker'], linestyle=cfg['linestyle'],
                         markersize=ms, linewidth=lw)
 
-        # 軸設定
         ax.set_xlabel(x_label)
         ax.set_ylabel(y_label)
         
@@ -533,11 +545,9 @@ def page_graph_plotting():
         if x_inv: ax.invert_xaxis()
         if y_inv: ax.invert_yaxis()
         
-        # 範囲設定 (0の場合はAutoとみなす簡易実装)
         if x_min != 0 or x_max != 0: ax.set_xlim(left=x_min if x_min!=0 else None, right=x_max if x_max!=0 else None)
         if y_min != 0 or y_max != 0: ax.set_ylim(bottom=y_min if y_min!=0 else None, top=y_max if y_max!=0 else None)
         
-        # 目盛・グリッド設定
         ax.tick_params(direction=tick_dir, which='both', width=1)
         if show_grid:
             ax.grid(True, which='major', linestyle='-', alpha=0.6)
@@ -545,19 +555,15 @@ def page_graph_plotting():
             ax.minorticks_on()
             ax.grid(True, which='minor', linestyle=':', alpha=0.3)
             
-        # 凡例
         if show_legend:
             ax.legend(loc=legend_loc, frameon=legend_frame)
             
-        # 注釈
         if ann_text:
             ax.text(ann_x, ann_y, ann_text, fontsize=font_size)
 
-        # レイアウト調整
         plt.tight_layout()
         st.pyplot(fig)
         
-        # ダウンロードボタン
         st.markdown("### 📥 保存")
         buf = BytesIO()
         fig.savefig(buf, format="png", dpi=300)
@@ -1027,6 +1033,7 @@ if __name__ == "__main__":
     except Exception:
         pass
     main()
+
 
 
 
