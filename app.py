@@ -311,38 +311,25 @@ def load_pl_data(uploaded_file):
         return df
     except Exception:
         return None
-
 # ---------------------------
-# --- NEW: General Graph Plotting Page (複数Y軸対応・凡例自動化版) ---
-# ---------------------------
-# ---------------------------
-# --- NEW: General Graph Plotting Page (Sticky Preview Edition) ---
+# --- NEW: General Graph Plotting Page (Error Bar Text Input Edition) ---
 # ---------------------------
 def page_graph_plotting():
     st.header("📈 高機能グラフ描画")
     st.markdown("論文・レポート用の美しいグラフを作成します。詳細設定が可能です。")
 
     # --- CSS Injection for Sticky Preview ---
-    # 右側のプレビューカラム(2列目)をスクロール追従させるCSS
     st.markdown("""
         <style>
-        /* メインエリアの2列目のカラムをStickyにする */
-        /* ※ 他の要素（Expander内など）への影響を避けるため、階層を限定する工夫が必要ですが、
-           ここでは簡易的に全体適用しつつ、Expander内を打ち消します */
-        
         div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:nth-of-type(2) {
             position: sticky;
-            top: 4rem; /* 画面上部からの距離 */
-            align-self: start; /* 高さを親に合わせず、コンテンツに合わせる */
+            top: 4rem;
+            align-self: start;
             z-index: 999;
         }
-
-        /* 設定メニュー(Expander)内の2列目カラムはStickyにしない（リセット） */
         div[data-testid="stExpander"] div[data-testid="stColumn"] {
             position: static !important;
         }
-        
-        /* タブ内の2列目カラムもリセット */
         div[data-testid="stTabs"] div[data-testid="stColumn"] {
             position: static !important;
         }
@@ -364,14 +351,12 @@ def page_graph_plotting():
             encodings_to_try = ['utf-8', 'shift_jis', 'cp932', 'euc_jp']
             for f in files:
                 df = None
-                # Step 1: Excelとして試行
                 try:
                     f.seek(0)
                     df = pd.read_excel(f, engine='openpyxl')
                 except:
                     df = None
 
-                # Step 2: テキストとして試行
                 if df is None:
                     raw_bytes = f.getvalue()
                     decoded_content = None
@@ -399,7 +384,6 @@ def page_graph_plotting():
                                 except: pass
 
                 if df is not None and not df.empty:
-                    # 列名のクリーニング
                     if all(isinstance(col, int) for col in df.columns):
                         df.columns = [f"Col {i+1}" for i in range(df.shape[1])]
                     df.columns = [str(c).strip() for c in df.columns]
@@ -435,11 +419,8 @@ def page_graph_plotting():
     # 2. グラフ詳細設定
     # ==========================================
     st.markdown("### 2. グラフ詳細設定")
-    
-    # 画面分割 (左:設定, 右:プレビュー)
-    col_settings, col_preview = st.columns([1.3, 2]) 
+    col_settings, col_preview = st.columns([1.3, 2])
 
-    # --- 左側：設定パネル ---
     with col_settings:
         
         # --- A. キャンバスとフォント ---
@@ -452,12 +433,12 @@ def page_graph_plotting():
             
             st.markdown("**フォント設定**")
             font_family_name = st.selectbox("フォント名", 
-                                       ["Arial", "Times New Roman", "Helvetica", 
-                                        "Hiragino Maru Gothic Pro", "Meiryo", "Yu Gothic", "TakaoGothic"])
+                                       ["Times New Roman", "Arial", "Helvetica", 
+                                        "Hiragino Maru Gothic Pro", "Meiryo", "Yu Gothic"], index=0)
             base_font_size = st.number_input("基本フォントサイズ", 6, 50, 14)
 
         # --- B. 軸設定 ---
-        with st.expander("📐 軸 (Axes) と グリッド"):
+        with st.expander("📐 軸 (Axes) と グリッド", expanded=True):
             tabs_ax = st.tabs(["X軸", "Y軸", "グリッド"])
             with tabs_ax[0]:
                 x_label = st.text_input("X軸ラベル", "X Axis")
@@ -477,6 +458,7 @@ def page_graph_plotting():
                 tick_dir = st.selectbox("目盛の向き", ["in", "out", "inout"], index=0)
                 show_grid = st.checkbox("グリッド線を表示", False) 
                 minor_grid = st.checkbox("補助目盛 (Minor)", False)
+                zero_axis = st.checkbox("0点で軸を交差させる", True)
 
         # --- C. 凡例設定 ---
         with st.expander("📝 凡例 (Legend)"):
@@ -490,13 +472,11 @@ def page_graph_plotting():
                 legend_fontsize = c3.number_input("文字サイズ", 6, 40, int(base_font_size))
                 legend_frame = c4.checkbox("枠線を表示", False)
 
-        # --- D. プロットデータ設定 (個別詳細設定) ---
+        # --- D. プロットデータ設定 (エラーバー入力強化) ---
         with st.expander("📈 データ系列の個別設定", expanded=True):
-            st.caption("ファイルごとにX軸と、プロットするY軸（複数可）を選択してください。")
+            st.caption("系列ごとに色やスタイルを変更できます。")
             
             final_plot_configs = []
-            
-            # カラーサイクル
             prop_cycle = plt.rcParams['axes.prop_cycle']
             default_colors = prop_cycle.by_key()['color']
             color_counter = 0
@@ -506,12 +486,9 @@ def page_graph_plotting():
                 st.markdown(f"**📂 {d['name']}**")
                 cols = d['df'].columns.tolist()
                 
-                # X軸選択
                 x_col = st.selectbox(f"X軸 ({i})", cols, index=0, key=f"x_sel_{i}")
-                
-                # Y軸複数選択
                 default_ys = cols[1:] if len(cols) > 1 else []
-                y_cols = st.multiselect(f"Y軸 (プロットする列を選択)", cols, default=default_ys, key=f"y_sel_{i}")
+                y_cols = st.multiselect(f"Y軸", cols, default=default_ys, key=f"y_sel_{i}")
                 
                 if y_cols:
                     st.markdown("👇 **系列ごとのスタイル設定**")
@@ -529,22 +506,31 @@ def page_graph_plotting():
                             marker_val = c3.selectbox("マーカー", ["None", "o", "s", "^", "D", "x", "."], index=0, key=f"mrk_{uid}")
                             line_val = c4.selectbox("線種", ["-", "--", "-.", ":", "None"], index=0, key=f"ln_{uid}")
                             
+                            # --- エラーバー設定 (強化版) ---
                             st.markdown("errors (任意)")
                             ce1, ce2 = st.columns(2)
-                            y_err_plus = ce1.selectbox("＋誤差列 (上)", ["None"] + cols, key=f"ep_{uid}")
-                            y_err_minus = ce2.selectbox("－誤差列 (下)", ["None"] + cols, key=f"em_{uid}")
+                            
+                            # プラス側
+                            err_p_mode = ce1.selectbox("＋誤差 (上)", ["なし", "手入力 (固定値)"] + cols, key=f"ep_sel_{uid}")
+                            err_p_val = 0.0
+                            if err_p_mode == "手入力 (固定値)":
+                                err_p_val = ce1.number_input("値 (上)", value=1.0, step=0.1, format="%.2f", key=f"ep_val_{uid}")
+                            
+                            # マイナス側
+                            err_m_mode = ce2.selectbox("－誤差 (下)", ["なし", "手入力 (固定値)"] + cols, key=f"em_sel_{uid}")
+                            err_m_val = 0.0
+                            if err_m_mode == "手入力 (固定値)":
+                                err_m_val = ce2.number_input("値 (下)", value=1.0, step=0.1, format="%.2f", key=f"em_val_{uid}")
                             
                             final_plot_configs.append({
                                 "df": d['df'],
-                                "x": x_col,
-                                "y": y_name,
-                                "label": label_txt,
-                                "color": color_val,
+                                "x": x_col, "y": y_name,
+                                "label": label_txt, "color": color_val,
                                 "marker": marker_val if marker_val != "None" else None,
                                 "linestyle": line_val if line_val != "None" else "", 
                                 "ls_raw": line_val,
-                                "err_p": y_err_plus,
-                                "err_m": y_err_minus
+                                "ep_mode": err_p_mode, "ep_val": err_p_val,
+                                "em_mode": err_m_mode, "em_val": err_m_val
                             })
 
     # ==========================================
@@ -556,42 +542,109 @@ def page_graph_plotting():
         plt.rcParams['font.size'] = base_font_size
         if font_family_name in ["Times New Roman", "Hiragino Maru Gothic Pro", "Meiryo"]:
             plt.rcParams['font.family'] = 'serif'
-            plt.rcParams['font.serif'] = [font_family_name]
+            plt.rcParams['font.serif'] = [font_family_name, "DejaVu Serif", "Liberation Serif", "serif"]
         else:
             plt.rcParams['font.family'] = 'sans-serif'
-            plt.rcParams['font.sans-serif'] = [font_family_name]
+            plt.rcParams['font.sans-serif'] = [font_family_name, "DejaVu Sans", "Liberation Sans", "sans-serif"]
 
         fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=dpi_val)
-        
+        ax.margins(0)
+
+        all_x = []
+        all_y = []
+
         for cfg in final_plot_configs:
             df_plot = cfg['df']
             x_data = df_plot[cfg['x']]
             y_data = df_plot[cfg['y']]
             
-            yerr = None
-            if cfg['err_p'] != "None" or cfg['err_m'] != "None":
-                if cfg['err_p'] != "None": ep = df_plot[cfg['err_p']]
-                else: ep = np.zeros_like(y_data)
-                
-                if cfg['err_m'] != "None": em = df_plot[cfg['err_m']]
-                else: em = np.zeros_like(y_data)
-                
-                yerr = [em, ep]
+            all_x.extend(x_data.dropna().values)
+            all_y.extend(y_data.dropna().values)
+            
+            # --- エラーバー値の決定 ---
+            ep_data = None
+            em_data = None
+            
+            # Plus
+            if cfg['ep_mode'] == "なし":
+                ep_data = np.zeros_like(y_data)
+            elif cfg['ep_mode'] == "手入力 (固定値)":
+                ep_data = np.full_like(y_data, cfg['ep_val'])
+            else:
+                ep_data = df_plot[cfg['ep_mode']]
+            
+            # Minus
+            if cfg['em_mode'] == "なし":
+                em_data = np.zeros_like(y_data)
+            elif cfg['em_mode'] == "手入力 (固定値)":
+                em_data = np.full_like(y_data, cfg['em_val'])
+            else:
+                em_data = df_plot[cfg['em_mode']]
+
+            # エラーバーが必要か判定 (値がすべて0なら描画しない)
+            has_error = False
+            if np.any(ep_data > 0) or np.any(em_data > 0):
+                has_error = True
+                yerr = [em_data, ep_data]
+            else:
+                yerr = None
 
             ls_arg = cfg['linestyle']
             if cfg['ls_raw'] == "None": ls_arg = 'none'
 
-            ax.errorbar(
-                x_data, y_data,
-                yerr=yerr,
-                label=cfg['label'],
-                color=cfg['color'],
-                marker=cfg['marker'],
-                linestyle=ls_arg,
-                markersize=6,
-                capsize=4,
-                linewidth=1.5
-            )
+            # 描画
+            if has_error:
+                ax.errorbar(
+                    x_data, y_data,
+                    yerr=yerr,
+                    label=cfg['label'],
+                    color=cfg['color'],
+                    marker=cfg['marker'],
+                    linestyle=ls_arg,
+                    markersize=6,
+                    capsize=4,
+                    linewidth=1.5
+                )
+            else:
+                ax.plot(
+                    x_data, y_data,
+                    label=cfg['label'],
+                    color=cfg['color'],
+                    marker=cfg['marker'],
+                    linestyle=ls_arg,
+                    markersize=6,
+                    linewidth=1.5
+                )
+
+        # --- 軸範囲とゼロ点処理 ---
+        has_data = len(all_x) > 0
+        if has_data:
+            data_x_min, data_x_max = min(all_x), max(all_x)
+            data_y_min, data_y_max = min(all_y), max(all_y)
+        else:
+            data_x_min, data_x_max = 0, 1
+            data_y_min, data_y_max = 0, 1
+
+        final_x_min = x_min if x_min != 0 else data_x_min
+        final_x_max = x_max if x_max != 0 else data_x_max
+        final_y_min = y_min if y_min != 0 else data_y_min
+        final_y_max = y_max if y_max != 0 else data_y_max
+        
+        ax.set_xlim(final_x_min, final_x_max)
+        ax.set_ylim(final_y_min, final_y_max)
+
+        if zero_axis:
+            if final_y_min <= 0 <= final_y_max:
+                ax.spines['bottom'].set_position('zero')
+                ax.spines['top'].set_color('none')
+            else:
+                ax.spines['bottom'].set_position(('axes', 0.0)) 
+
+            if final_x_min <= 0 <= final_x_max:
+                ax.spines['left'].set_position('zero')
+                ax.spines['right'].set_color('none')
+            else:
+                ax.spines['left'].set_position(('axes', 0.0))
 
         ax.set_xlabel(x_label)
         ax.set_ylabel(y_label)
@@ -601,13 +654,8 @@ def page_graph_plotting():
         if x_inv: ax.invert_xaxis()
         if y_inv: ax.invert_yaxis()
         
-        if x_min != 0 or x_max != 0: 
-            ax.set_xlim(left=x_min if x_min!=0 else None, right=x_max if x_max!=0 else None)
-        if y_min != 0 or y_max != 0: 
-            ax.set_ylim(bottom=y_min if y_min!=0 else None, top=y_max if y_max!=0 else None)
-        
         ax.tick_params(direction=tick_dir, which='both', width=1, length=6)
-        if tick_dir == 'in':
+        if tick_dir == 'in' and not zero_axis:
             ax.tick_params(top=True, right=True)
             
         if show_grid:
@@ -1112,6 +1160,7 @@ if __name__ == "__main__":
     except Exception:
         pass
     main()
+
 
 
 
