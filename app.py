@@ -311,12 +311,13 @@ def load_pl_data(uploaded_file):
         return df
     except Exception:
         return None
+        
 # ---------------------------
-# --- NEW: General Graph Plotting Page (Error Bar Text Input Edition) ---
+# --- NEW: General Graph Plotting Page (Project Save/Load Edition) ---
 # ---------------------------
 def page_graph_plotting():
     st.header("📈 高機能グラフ描画")
-    st.markdown("論文・レポート用の美しいグラフを作成します。詳細設定が可能です。")
+    st.markdown("論文・レポート用の美しいグラフを作成します。**プロジェクトの保存・復元**が可能です。")
 
     # --- CSS Injection for Sticky Preview ---
     st.markdown("""
@@ -330,89 +331,190 @@ def page_graph_plotting():
         div[data-testid="stExpander"] div[data-testid="stColumn"] {
             position: static !important;
         }
-        div[data-testid="stTabs"] div[data-testid="stColumn"] {
-            position: static !important;
-        }
         </style>
     """, unsafe_allow_html=True)
 
-    data_list = []
+    # セッションステートの初期化 (プロジェクトデータ用)
+    if 'gp_data_list' not in st.session_state:
+        st.session_state['gp_data_list'] = []
+
+    # ==========================================
+    # 0. プロジェクト管理 (保存・復元)
+    # ==========================================
+    with st.expander("💾 プロジェクトの保存・復元 (データと設定をファイル化)", expanded=False):
+        c_load, c_save = st.columns(2)
+        
+        # --- A. 復元 (Load) ---
+        with c_load:
+            st.markdown("#### 📂 復元 (Load)")
+            uploaded_project = st.file_uploader("プロジェクトファイル (.json)", type=["json"], key="project_loader")
+            if uploaded_project:
+                try:
+                    project_data = json.load(uploaded_project)
+                    
+                    # 1. データの復元
+                    restored_data_list = []
+                    for item in project_data.get("datasets", []):
+                        # CSV文字列からDataFrameを復元
+                        df_restored = pd.read_csv(io.StringIO(item["data_csv"]))
+                        restored_data_list.append({"name": item["name"], "df": df_restored})
+                    
+                    # セッションステートにデータをセット
+                    st.session_state['gp_data_list'] = restored_data_list
+                    
+                    # 2. 設定(Widget State)の復元
+                    # 保存されている設定値を現在のセッションステートに適用
+                    saved_settings = project_data.get("settings", {})
+                    for key, value in saved_settings.items():
+                        st.session_state[key] = value
+                    
+                    st.success("✅ プロジェクトを復元しました。")
+                except Exception as e:
+                    st.error(f"プロジェクト読み込みエラー: {e}")
+
+        # --- B. 保存 (Save) ---
+        with c_save:
+            st.markdown("#### 💾 保存 (Save)")
+            st.info("現在のデータと全ての設定を保存します。")
+            # 保存ボタンは、描画処理の最後（すべての設定値が確定した後）に配置するか、
+            # ここでsession_stateを参照して保存データを作成する。
+            # Streamlitの仕様上、Widgetの値はsession_stateに入っているため、それをダンプする。
+            
+            if st.button("プロジェクトファイルを作成"):
+                if not st.session_state['gp_data_list']:
+                    st.warning("データがありません。")
+                else:
+                    # 1. データセットのシリアライズ
+                    datasets_serialized = []
+                    for d in st.session_state['gp_data_list']:
+                        # DataFrameをCSV文字列に変換
+                        csv_buffer = io.StringIO()
+                        d['df'].to_csv(csv_buffer, index=False)
+                        datasets_serialized.append({
+                            "name": d['name'],
+                            "data_csv": csv_buffer.getvalue()
+                        })
+                    
+                    # 2. 設定値(Widget)の抽出
+                    # 'gp_' や 'xlog' など、グラフ描画に関連するキーのみを抽出
+                    # (システム的なキーやupload_fileオブジェクトは除外)
+                    settings_snapshot = {}
+                    for key, val in st.session_state.items():
+                        # 保存対象のキーパターン (今回の実装で使っているキー)
+                        # gp_uploader, project_loader は除外
+                        if key in ['gp_uploader', 'project_loader', 'gp_data_list']:
+                            continue
+                        # シリアライズ可能なものだけ保存 (基本型)
+                        if isinstance(val, (int, float, str, bool, list, dict, type(None))):
+                            settings_snapshot[key] = val
+
+                    # 3. JSON作成
+                    project_obj = {
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "datasets": datasets_serialized,
+                        "settings": settings_snapshot
+                    }
+                    
+                    json_str = json.dumps(project_obj, indent=2, ensure_ascii=False)
+                    file_name = f"GraphProject_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
+                    
+                    st.download_button(
+                        label="⬇️ JSONファイルをダウンロード",
+                        data=json_str,
+                        file_name=file_name,
+                        mime="application/json"
+                    )
 
     # ==========================================
     # 1. データ入力セクション
     # ==========================================
     st.subheader("1. データの入力")
-    tab1, tab2 = st.tabs(["📂 ファイルから読み込み", "📋 テキストを貼り付け (Excelから)"])
+    
+    # プロジェクトから読み込んだデータがある場合はそれを表示・使用
+    if st.session_state['gp_data_list']:
+        st.success(f"📂 プロジェクトから **{len(st.session_state['gp_data_list'])}** 個のデータを読み込み済みです。")
+        if st.button("🗑️ データをクリアして新規作成"):
+            st.session_state['gp_data_list'] = []
+            st.rerun()
+    
+    # データがない場合のみアップローダーを表示
+    if not st.session_state['gp_data_list']:
+        tab1, tab2 = st.tabs(["📂 ファイルから読み込み", "📋 テキストを貼り付け (Excelから)"])
 
-    # --- Tab 1: ファイルアップロード ---
-    with tab1:
-        files = st.file_uploader("テキスト/CSVファイルを選択 (複数可)", accept_multiple_files=True, key="gp_uploader")
-        if files:
-            encodings_to_try = ['utf-8', 'shift_jis', 'cp932', 'euc_jp']
-            for f in files:
-                df = None
-                try:
-                    f.seek(0)
-                    df = pd.read_excel(f, engine='openpyxl')
-                except:
+        # --- Tab 1: ファイルアップロード ---
+        with tab1:
+            files = st.file_uploader("テキスト/CSVファイルを選択 (複数可)", accept_multiple_files=True, key="gp_uploader")
+            if files:
+                new_data = []
+                encodings_to_try = ['utf-8', 'shift_jis', 'cp932', 'euc_jp']
+                for f in files:
                     df = None
-
-                if df is None:
-                    raw_bytes = f.getvalue()
-                    decoded_content = None
-                    for enc in encodings_to_try:
-                        try:
-                            decoded_content = raw_bytes.decode(enc)
-                            break
-                        except: continue
-                    
-                    if decoded_content:
-                        lines = [l.strip() for l in decoded_content.splitlines() if l.strip() and not l.strip().startswith(('#','!','/'))]
-                        if lines:
-                            header_opt = 'infer'
-                            try:
-                                first_val = lines[0].split()[0].replace(',', '')
-                                if first_val.replace('.', '', 1).replace('-', '', 1).isdigit():
-                                    header_opt = None
-                            except: pass
-
-                            try:
-                                df = pd.read_csv(io.StringIO("\n".join(lines)), sep=',', engine='python', header=header_opt)
-                            except:
-                                try:
-                                    df = pd.read_csv(io.StringIO("\n".join(lines)), sep=r'[\t ]+', engine='python', header=header_opt)
-                                except: pass
-
-                if df is not None and not df.empty:
-                    if all(isinstance(col, int) for col in df.columns):
-                        df.columns = [f"Col {i+1}" for i in range(df.shape[1])]
-                    df.columns = [str(c).strip() for c in df.columns]
-                    data_list.append({"name": f.name, "df": df})
-                else:
-                    st.error(f"❌ {f.name} の読み込みに失敗しました。")
-
-    # --- Tab 2: コピペ ---
-    with tab2:
-        st.info("Excelのセル範囲をコピーして貼り付けてください。")
-        paste_text = st.text_area("データ貼り付けエリア", height=150)
-        paste_name = st.text_input("データセット名", value="Pasted Data")
-        if paste_text:
-            try:
-                lines = [l.strip() for l in paste_text.splitlines() if l.strip() and not l.strip().startswith(('#','!','/'))]
-                if lines:
-                    header_opt = 'infer'
                     try:
-                        first_val = lines[0].split()[0].replace(',', '')
-                        if first_val.replace('.', '', 1).replace('-', '', 1).isdigit(): header_opt = None
-                    except: pass
-                    df_paste = pd.read_csv(io.StringIO("\n".join(lines)), sep=r'[\t, ]+', engine='python', header=header_opt)
-                    if df_paste is not None and not df_paste.empty:
-                        if all(isinstance(col, int) for col in df_paste.columns):
-                            df_paste.columns = [f"Col {i+1}" for i in range(df_paste.shape[1])]
-                        df_paste.columns = [str(c).strip() for c in df_paste.columns]
-                        data_list.append({"name": paste_name, "df": df_paste})
-            except: pass
+                        f.seek(0)
+                        df = pd.read_excel(f, engine='openpyxl')
+                    except: df = None
 
+                    if df is None:
+                        raw_bytes = f.getvalue()
+                        decoded_content = None
+                        for enc in encodings_to_try:
+                            try:
+                                decoded_content = raw_bytes.decode(enc)
+                                break
+                            except: continue
+                        
+                        if decoded_content:
+                            lines = [l.strip() for l in decoded_content.splitlines() if l.strip() and not l.strip().startswith(('#','!','/'))]
+                            if lines:
+                                header_opt = 'infer'
+                                try:
+                                    first_val = lines[0].split()[0].replace(',', '')
+                                    if first_val.replace('.', '', 1).replace('-', '', 1).isdigit(): header_opt = None
+                                except: pass
+                                try:
+                                    df = pd.read_csv(io.StringIO("\n".join(lines)), sep=',', engine='python', header=header_opt)
+                                except:
+                                    try:
+                                        df = pd.read_csv(io.StringIO("\n".join(lines)), sep=r'[\t ]+', engine='python', header=header_opt)
+                                    except: pass
+
+                    if df is not None and not df.empty:
+                        if all(isinstance(col, int) for col in df.columns):
+                            df.columns = [f"Col {i+1}" for i in range(df.shape[1])]
+                        df.columns = [str(c).strip() for c in df.columns]
+                        new_data.append({"name": f.name, "df": df})
+                    else:
+                        st.error(f"❌ {f.name} の読み込み失敗")
+                
+                if new_data:
+                    st.session_state['gp_data_list'] = new_data
+                    st.rerun()
+
+        # --- Tab 2: コピペ ---
+        with tab2:
+            st.info("Excelのセル範囲をコピーして貼り付けてください。")
+            paste_text = st.text_area("データ貼り付けエリア", height=150)
+            paste_name = st.text_input("データセット名", value="Pasted Data")
+            if paste_text:
+                try:
+                    lines = [l.strip() for l in paste_text.splitlines() if l.strip() and not l.strip().startswith(('#','!','/'))]
+                    if lines:
+                        header_opt = 'infer'
+                        try:
+                            first_val = lines[0].split()[0].replace(',', '')
+                            if first_val.replace('.', '', 1).replace('-', '', 1).isdigit(): header_opt = None
+                        except: pass
+                        df_paste = pd.read_csv(io.StringIO("\n".join(lines)), sep=r'[\t, ]+', engine='python', header=header_opt)
+                        if df_paste is not None and not df_paste.empty:
+                            if all(isinstance(col, int) for col in df_paste.columns):
+                                df_paste.columns = [f"Col {i+1}" for i in range(df_paste.shape[1])]
+                            df_paste.columns = [str(c).strip() for c in df_paste.columns]
+                            st.session_state['gp_data_list'] = [{"name": paste_name, "df": df_paste}]
+                            st.rerun()
+                except: pass
+
+    # データリストの確定
+    data_list = st.session_state['gp_data_list']
     if not data_list: return
 
     # ==========================================
@@ -422,60 +524,52 @@ def page_graph_plotting():
     col_settings, col_preview = st.columns([1.3, 2])
 
     with col_settings:
-        
-        # --- A. キャンバスとフォント ---
+        # --- A. キャンバス ---
         with st.expander("📊 キャンバス・フォント設定", expanded=True):
             c1, c2 = st.columns(2)
-            fig_w = c1.number_input("幅 (inch)", 1.0, 50.0, 8.0, step=0.5)
-            fig_h = c2.number_input("高さ (inch)", 1.0, 50.0, 6.0, step=0.5)
-            
-            dpi_val = st.number_input("解像度 (DPI)", 72, 1200, 150)
-            
+            fig_w = c1.number_input("幅 (inch)", 1.0, 50.0, 8.0, step=0.5, key="fig_w")
+            fig_h = c2.number_input("高さ (inch)", 1.0, 50.0, 6.0, step=0.5, key="fig_h")
+            dpi_val = st.number_input("解像度 (DPI)", 72, 1200, 150, key="dpi_val")
             st.markdown("**フォント設定**")
-            font_family_name = st.selectbox("フォント名", 
-                                       ["Times New Roman", "Arial", "Helvetica", 
-                                        "Hiragino Maru Gothic Pro", "Meiryo", "Yu Gothic"], index=0)
-            base_font_size = st.number_input("基本フォントサイズ", 6, 50, 14)
+            font_family_name = st.selectbox("フォント名", ["Times New Roman", "Arial", "Helvetica", "Hiragino Maru Gothic Pro", "Meiryo", "Yu Gothic"], index=0, key="font_fam")
+            base_font_size = st.number_input("基本フォントサイズ", 6, 50, 14, key="font_size")
 
         # --- B. 軸設定 ---
         with st.expander("📐 軸 (Axes) と グリッド", expanded=True):
             tabs_ax = st.tabs(["X軸", "Y軸", "グリッド"])
             with tabs_ax[0]:
-                x_label = st.text_input("X軸ラベル", "X Axis")
+                x_label = st.text_input("X軸ラベル", "X Axis", key="xlab")
                 c1, c2 = st.columns(2)
-                x_min = c1.number_input("X最小 (0=Auto)", value=0.0)
-                x_max = c2.number_input("X最大 (0=Auto)", value=0.0)
+                x_min = c1.number_input("X最小 (0=Auto)", value=0.0, key="xmin")
+                x_max = c2.number_input("X最大 (0=Auto)", value=0.0, key="xmax")
                 x_log = st.checkbox("対数表示 (Log)", False, key="xlog")
                 x_inv = st.checkbox("軸反転", False, key="xinv")
             with tabs_ax[1]:
-                y_label = st.text_input("Y軸ラベル", "Intensity (a.u.)")
+                y_label = st.text_input("Y軸ラベル", "Intensity (a.u.)", key="ylab")
                 c1, c2 = st.columns(2)
-                y_min = c1.number_input("Y最小 (0=Auto)", value=0.0)
-                y_max = c2.number_input("Y最大 (0=Auto)", value=0.0)
+                y_min = c1.number_input("Y最小 (0=Auto)", value=0.0, key="ymin")
+                y_max = c2.number_input("Y最大 (0=Auto)", value=0.0, key="ymax")
                 y_log = st.checkbox("対数表示 (Log)", False, key="ylog")
                 y_inv = st.checkbox("軸反転", False, key="yinv")
             with tabs_ax[2]:
-                tick_dir = st.selectbox("目盛の向き", ["in", "out", "inout"], index=0)
-                show_grid = st.checkbox("グリッド線を表示", False) 
-                minor_grid = st.checkbox("補助目盛 (Minor)", False)
-                zero_axis = st.checkbox("0点で軸を交差させる", True)
+                tick_dir = st.selectbox("目盛の向き", ["in", "out", "inout"], index=0, key="tick_dir")
+                show_grid = st.checkbox("グリッド線を表示", False, key="show_grid") 
+                minor_grid = st.checkbox("補助目盛 (Minor)", False, key="minor_grid")
+                zero_axis = st.checkbox("0点で軸を交差させる", True, key="zero_axis")
 
         # --- C. 凡例設定 ---
         with st.expander("📝 凡例 (Legend)"):
-            show_legend = st.checkbox("凡例を表示", True)
+            show_legend = st.checkbox("凡例を表示", True, key="show_leg")
             if show_legend:
                 c1, c2 = st.columns(2)
-                legend_loc = c1.selectbox("位置", ["best", "upper right", "upper left", "lower right", "lower left", "outside right"], index=0)
-                legend_cols = c2.number_input("列数", 1, 10, 1)
-                
+                legend_loc = c1.selectbox("位置", ["best", "upper right", "upper left", "lower right", "lower left", "outside right"], index=0, key="leg_loc")
+                legend_cols = c2.number_input("列数", 1, 10, 1, key="leg_col")
                 c3, c4 = st.columns(2)
-                legend_fontsize = c3.number_input("文字サイズ", 6, 40, int(base_font_size))
-                legend_frame = c4.checkbox("枠線を表示", False)
+                legend_fontsize = c3.number_input("文字サイズ", 6, 40, int(base_font_size), key="leg_fs")
+                legend_frame = c4.checkbox("枠線を表示", False, key="leg_fr")
 
-        # --- D. プロットデータ設定 (エラーバー入力強化) ---
+        # --- D. プロットデータ設定 ---
         with st.expander("📈 データ系列の個別設定", expanded=True):
-            st.caption("系列ごとに色やスタイルを変更できます。")
-            
             final_plot_configs = []
             prop_cycle = plt.rcParams['axes.prop_cycle']
             default_colors = prop_cycle.by_key()['color']
@@ -486,6 +580,7 @@ def page_graph_plotting():
                 st.markdown(f"**📂 {d['name']}**")
                 cols = d['df'].columns.tolist()
                 
+                # キーを固定化して保存・復元に対応させる
                 x_col = st.selectbox(f"X軸 ({i})", cols, index=0, key=f"x_sel_{i}")
                 default_ys = cols[1:] if len(cols) > 1 else []
                 y_cols = st.multiselect(f"Y軸", cols, default=default_ys, key=f"y_sel_{i}")
@@ -493,6 +588,8 @@ def page_graph_plotting():
                 if y_cols:
                     st.markdown("👇 **系列ごとのスタイル設定**")
                     for j, y_name in enumerate(y_cols):
+                        # uidは i(ファイル番号) と y_name(列名) で一意にするのが望ましいが、
+                        # 以前の設定を復元しやすくするため、インデックスベースでキーを生成
                         uid = f"{i}_{j}"
                         def_color = default_colors[color_counter % len(default_colors)]
                         color_counter += 1
@@ -501,26 +598,21 @@ def page_graph_plotting():
                             c1, c2 = st.columns(2)
                             label_txt = c1.text_input("凡例ラベル", value=y_name, key=f"lbl_{uid}")
                             color_val = c2.color_picker("色", value=def_color, key=f"col_{uid}")
-                            
                             c3, c4 = st.columns(2)
                             marker_val = c3.selectbox("マーカー", ["None", "o", "s", "^", "D", "x", "."], index=0, key=f"mrk_{uid}")
                             line_val = c4.selectbox("線種", ["-", "--", "-.", ":", "None"], index=0, key=f"ln_{uid}")
                             
-                            # --- エラーバー設定 (強化版) ---
                             st.markdown("errors (任意)")
                             ce1, ce2 = st.columns(2)
+                            ep_sel = ce1.selectbox("＋誤差 (上)", ["なし", "手入力 (固定値)"] + cols, key=f"ep_sel_{uid}")
+                            ep_val = 0.0
+                            if ep_sel == "手入力 (固定値)":
+                                ep_val = ce1.number_input("値 (上)", value=1.0, key=f"ep_val_{uid}")
                             
-                            # プラス側
-                            err_p_mode = ce1.selectbox("＋誤差 (上)", ["なし", "手入力 (固定値)"] + cols, key=f"ep_sel_{uid}")
-                            err_p_val = 0.0
-                            if err_p_mode == "手入力 (固定値)":
-                                err_p_val = ce1.number_input("値 (上)", value=1.0, step=0.1, format="%.2f", key=f"ep_val_{uid}")
-                            
-                            # マイナス側
-                            err_m_mode = ce2.selectbox("－誤差 (下)", ["なし", "手入力 (固定値)"] + cols, key=f"em_sel_{uid}")
-                            err_m_val = 0.0
-                            if err_m_mode == "手入力 (固定値)":
-                                err_m_val = ce2.number_input("値 (下)", value=1.0, step=0.1, format="%.2f", key=f"em_val_{uid}")
+                            em_sel = ce2.selectbox("－誤差 (下)", ["なし", "手入力 (固定値)"] + cols, key=f"em_sel_{uid}")
+                            em_val = 0.0
+                            if em_sel == "手入力 (固定値)":
+                                em_val = ce2.number_input("値 (下)", value=1.0, key=f"em_val_{uid}")
                             
                             final_plot_configs.append({
                                 "df": d['df'],
@@ -529,8 +621,8 @@ def page_graph_plotting():
                                 "marker": marker_val if marker_val != "None" else None,
                                 "linestyle": line_val if line_val != "None" else "", 
                                 "ls_raw": line_val,
-                                "ep_mode": err_p_mode, "ep_val": err_p_val,
-                                "em_mode": err_m_mode, "em_val": err_m_val
+                                "ep_mode": ep_sel, "ep_val": ep_val,
+                                "em_mode": em_sel, "em_val": em_val
                             })
 
     # ==========================================
@@ -542,13 +634,13 @@ def page_graph_plotting():
         plt.rcParams['font.size'] = base_font_size
         if font_family_name in ["Times New Roman", "Hiragino Maru Gothic Pro", "Meiryo"]:
             plt.rcParams['font.family'] = 'serif'
-            plt.rcParams['font.serif'] = [font_family_name, "DejaVu Serif", "Liberation Serif", "serif"]
+            plt.rcParams['font.serif'] = [font_family_name, "DejaVu Serif", "serif"]
         else:
             plt.rcParams['font.family'] = 'sans-serif'
-            plt.rcParams['font.sans-serif'] = [font_family_name, "DejaVu Sans", "Liberation Sans", "sans-serif"]
+            plt.rcParams['font.sans-serif'] = [font_family_name, "DejaVu Sans", "sans-serif"]
 
         fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=dpi_val)
-        ax.margins(0)
+        ax.margins(0) # 空白削除
 
         all_x = []
         all_y = []
@@ -561,62 +653,35 @@ def page_graph_plotting():
             all_x.extend(x_data.dropna().values)
             all_y.extend(y_data.dropna().values)
             
-            # --- エラーバー値の決定 ---
-            ep_data = None
-            em_data = None
-            
+            # Error Bar
+            yerr = None
             # Plus
-            if cfg['ep_mode'] == "なし":
-                ep_data = np.zeros_like(y_data)
-            elif cfg['ep_mode'] == "手入力 (固定値)":
-                ep_data = np.full_like(y_data, cfg['ep_val'])
-            else:
-                ep_data = df_plot[cfg['ep_mode']]
-            
+            if cfg['ep_mode'] == "なし": ep = np.zeros_like(y_data)
+            elif cfg['ep_mode'] == "手入力 (固定値)": ep = np.full_like(y_data, cfg['ep_val'])
+            else: ep = df_plot[cfg['ep_mode']]
             # Minus
-            if cfg['em_mode'] == "なし":
-                em_data = np.zeros_like(y_data)
-            elif cfg['em_mode'] == "手入力 (固定値)":
-                em_data = np.full_like(y_data, cfg['em_val'])
-            else:
-                em_data = df_plot[cfg['em_mode']]
+            if cfg['em_mode'] == "なし": em = np.zeros_like(y_data)
+            elif cfg['em_mode'] == "手入力 (固定値)": em = np.full_like(y_data, cfg['em_val'])
+            else: em = df_plot[cfg['em_mode']]
 
-            # エラーバーが必要か判定 (値がすべて0なら描画しない)
-            has_error = False
-            if np.any(ep_data > 0) or np.any(em_data > 0):
-                has_error = True
-                yerr = [em_data, ep_data]
-            else:
-                yerr = None
+            if np.any(ep > 0) or np.any(em > 0):
+                yerr = [em, ep]
 
             ls_arg = cfg['linestyle']
             if cfg['ls_raw'] == "None": ls_arg = 'none'
 
-            # 描画
-            if has_error:
-                ax.errorbar(
-                    x_data, y_data,
-                    yerr=yerr,
-                    label=cfg['label'],
-                    color=cfg['color'],
-                    marker=cfg['marker'],
-                    linestyle=ls_arg,
-                    markersize=6,
-                    capsize=4,
-                    linewidth=1.5
-                )
+            if yerr is not None:
+                ax.errorbar(x_data, y_data, yerr=yerr,
+                            label=cfg['label'], color=cfg['color'],
+                            marker=cfg['marker'], linestyle=ls_arg,
+                            markersize=6, capsize=4, linewidth=1.5)
             else:
-                ax.plot(
-                    x_data, y_data,
-                    label=cfg['label'],
-                    color=cfg['color'],
-                    marker=cfg['marker'],
-                    linestyle=ls_arg,
-                    markersize=6,
-                    linewidth=1.5
-                )
+                ax.plot(x_data, y_data,
+                        label=cfg['label'], color=cfg['color'],
+                        marker=cfg['marker'], linestyle=ls_arg,
+                        markersize=6, linewidth=1.5)
 
-        # --- 軸範囲とゼロ点処理 ---
+        # 軸範囲とゼロ点
         has_data = len(all_x) > 0
         if has_data:
             data_x_min, data_x_max = min(all_x), max(all_x)
@@ -634,6 +699,7 @@ def page_graph_plotting():
         ax.set_ylim(final_y_min, final_y_max)
 
         if zero_axis:
+            # 軸線を0に
             if final_y_min <= 0 <= final_y_max:
                 ax.spines['bottom'].set_position('zero')
                 ax.spines['top'].set_color('none')
@@ -676,23 +742,17 @@ def page_graph_plotting():
             if legend_loc == "outside right":
                 loc_arg = "center left"
                 bbox = (1.02, 0.5)
-            
             ax.legend(
-                loc=loc_arg, 
-                bbox_to_anchor=bbox,
-                ncol=legend_cols,
-                fontsize=legend_fontsize,
-                frameon=legend_frame,
-                edgecolor='black' if legend_frame else None,
-                fancybox=False
+                loc=loc_arg, bbox_to_anchor=bbox, ncol=legend_cols,
+                fontsize=legend_fontsize, frameon=legend_frame,
+                edgecolor='black' if legend_frame else None, fancybox=False
             )
 
         plt.tight_layout()
         st.pyplot(fig)
         
-        st.markdown("### 📥 グラフの保存")
+        st.markdown("### 📥 保存")
         c_dl1, c_dl2 = st.columns(2)
-        
         buf = BytesIO()
         fig.savefig(buf, format="png", dpi=300, bbox_inches='tight')
         c_dl1.download_button("PNGを保存 (300dpi)", buf.getvalue(), "graph.png", "image/png")
@@ -1160,6 +1220,7 @@ if __name__ == "__main__":
     except Exception:
         pass
     main()
+
 
 
 
