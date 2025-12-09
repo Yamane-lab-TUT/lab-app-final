@@ -313,11 +313,11 @@ def load_pl_data(uploaded_file):
         return None
         
 # ---------------------------
-# --- NEW: General Graph Plotting Page (Key Error Fixed Edition) ---
+# --- NEW: General Graph Plotting Page (Log-Abs Auto Convert Edition) ---
 # ---------------------------
 def page_graph_plotting():
     st.header("📈 高機能グラフ描画")
-    st.markdown("論文・レポート用。**2軸（右Y軸、上X軸）** のプロットに対応しました。")
+    st.markdown("論文・レポート用。**対数表示時は自動で絶対値**をとってプロットします。")
 
     # --- CSS Injection for Sticky Preview ---
     st.markdown("""
@@ -473,23 +473,20 @@ def page_graph_plotting():
             font_family_name = st.selectbox("フォント名", ["Times New Roman", "Arial", "Helvetica", "Hiragino Maru Gothic Pro", "Meiryo", "Yu Gothic"], index=0, key="font_fam")
             base_font_size = st.number_input("基本フォントサイズ", 6, 50, 14, key="font_size")
 
-        # --- 軸設定 (キー重複修正済み) ---
+        # --- 軸設定 ---
         with st.expander("📐 軸 (Axes) と グリッド", expanded=True):
             tabs_ax = st.tabs(["X軸(下)", "X軸(上)", "Y軸(左)", "Y軸(右)", "共通"])
             ax_settings = {}
 
-            # ★ 修正済みヘルパー関数: key名を明確化 ★
+            # Helper
             def axis_ui(key_prefix, label_def):
                 label = st.text_input("ラベル", label_def, key=f"{key_prefix}_lbl")
                 c1, c2 = st.columns(2)
-                # _axis_min に変更して _minor_tick との重複を回避
                 d_min = c1.number_input("最小 (0=Auto)", 0.0, key=f"{key_prefix}_axis_min")
                 d_max = c2.number_input("最大 (0=Auto)", 0.0, key=f"{key_prefix}_axis_max")
                 
                 c3, c4 = st.columns(2)
-                # _maj_tick に変更
                 maj_int = c3.number_input("主目盛間隔 (0=Auto)", 0.0, step=0.1, key=f"{key_prefix}_maj_tick")
-                # _minor_tick に変更
                 min_int = c4.number_input("補助目盛間隔 (0=Auto)", 0.0, step=0.1, key=f"{key_prefix}_minor_tick")
                 
                 is_log = st.checkbox("対数 (Log)", False, key=f"{key_prefix}_log")
@@ -504,7 +501,6 @@ def page_graph_plotting():
             with tabs_ax[4]:
                 tick_dir = st.selectbox("目盛の向き", ["in", "out", "inout"], index=0, key="tick_dir")
                 show_grid = st.checkbox("グリッド線を表示", False, key="show_grid") 
-                # デフォルトTrue
                 zero_axis = st.checkbox("0点で軸を交差させる (X=0, Y=0)", True, key="zero_axis")
 
         with st.expander("📝 凡例 (Legend)"):
@@ -545,7 +541,6 @@ def page_graph_plotting():
                             color_val = c2.color_picker("色", value=def_color, key=f"col_{uid}")
                             
                             c3, c4 = st.columns(2)
-                            # 軸の選択
                             target_x = c3.radio("X軸の配置", ["下 (Bottom)", "上 (Top)"], index=0, horizontal=True, key=f"tx_{uid}")
                             target_y = c4.radio("Y軸の配置", ["左 (Left)", "右 (Right)"], index=0, horizontal=True, key=f"ty_{uid}")
                             
@@ -599,19 +594,25 @@ def page_graph_plotting():
             ax4 = ax2.twiny()
             ax4.get_shared_x_axes().join(ax4, ax3)
 
+        # 軸設定の適用ヘルパー
         def apply_axis_settings(ax, x_key, y_key):
             if ax is None: return
+            
+            # --- Label & Log ---
             ax.set_xlabel(ax_settings[x_key]['label'])
             if ax_settings[x_key]['log']: ax.set_xscale('log')
             if ax_settings[x_key]['inv']: ax.invert_xaxis()
             
+            # --- Range ---
             x_mi, x_ma = ax_settings[x_key]['min'], ax_settings[x_key]['max']
             if x_mi != 0 or x_ma != 0:
                 ax.set_xlim(left=x_mi if x_mi!=0 else None, right=x_ma if x_ma!=0 else None)
             
+            # --- Ticks Interval ---
             if ax_settings[x_key]['maj'] > 0: ax.xaxis.set_major_locator(ticker.MultipleLocator(ax_settings[x_key]['maj']))
             if ax_settings[x_key]['min_int'] > 0: ax.xaxis.set_minor_locator(ticker.MultipleLocator(ax_settings[x_key]['min_int']))
 
+            # Y Axis
             ax.set_ylabel(ax_settings[y_key]['label'])
             if ax_settings[y_key]['log']: ax.set_yscale('log')
             if ax_settings[y_key]['inv']: ax.invert_yaxis()
@@ -623,23 +624,39 @@ def page_graph_plotting():
             if ax_settings[y_key]['maj'] > 0: ax.yaxis.set_major_locator(ticker.MultipleLocator(ax_settings[y_key]['maj']))
             if ax_settings[y_key]['min_int'] > 0: ax.yaxis.set_minor_locator(ticker.MultipleLocator(ax_settings[y_key]['min_int']))
 
+            # Ticks Style
             ax.tick_params(which='major', direction=tick_dir, width=1.0, length=6.0)
             ax.tick_params(which='minor', direction=tick_dir, width=0.8, length=3.0)
 
         for cfg in final_plot_configs:
+            # ターゲット軸決定
             is_top = "上" in cfg['target_x']
             is_right = "右" in cfg['target_y']
+            
             target_ax = ax1
-            if is_top and is_right: target_ax = ax4
-            elif is_top: target_ax = ax3
-            elif is_right: target_ax = ax2
+            ax_key_x = 'x1'; ax_key_y = 'y1'
+            
+            if is_top and is_right: 
+                target_ax = ax4
+                ax_key_x = 'x2'; ax_key_y = 'y2'
+            elif is_top: 
+                target_ax = ax3
+                ax_key_x = 'x2'; ax_key_y = 'y1'
+            elif is_right: 
+                target_ax = ax2
+                ax_key_x = 'x1'; ax_key_y = 'y2'
             
             if target_ax is None: continue
 
             df_plot = cfg['df']
-            x_data = df_plot[cfg['x']]
-            y_data = df_plot[cfg['y']]
+            x_data = df_plot[cfg['x']].copy()
+            y_data = df_plot[cfg['y']].copy()
             
+            # ★ 対数表示時の絶対値化 (重要) ★
+            if ax_settings[ax_key_x]['log']: x_data = x_data.abs()
+            if ax_settings[ax_key_y]['log']: y_data = y_data.abs()
+            
+            # Error Bars
             yerr = None
             if cfg['ep_mode'] == "なし": ep = np.zeros_like(y_data)
             elif cfg['ep_mode'] == "手入力 (固定値)": ep = np.full_like(y_data, cfg['ep_val'])
@@ -661,6 +678,7 @@ def page_graph_plotting():
                 target_ax.plot(x_data, y_data, label=cfg['label'], color=cfg['color'],
                         marker=cfg['marker'], linestyle=ls_arg, markersize=6, linewidth=1.5)
 
+        # Apply settings
         apply_axis_settings(ax1, 'x1', 'y1')
         if ax2: apply_axis_settings(ax2, 'x1', 'y2')
         if ax3: apply_axis_settings(ax3, 'x2', 'y1')
@@ -1169,6 +1187,7 @@ if __name__ == "__main__":
     except Exception:
         pass
     main()
+
 
 
 
