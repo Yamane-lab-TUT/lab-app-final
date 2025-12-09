@@ -313,13 +313,12 @@ def load_pl_data(uploaded_file):
         return None
 
 # ---------------------------
-# --- NEW: General Graph Plotting Page (コピペ入力対応版) ---
+# --- NEW: General Graph Plotting Page (複数Y軸対応・凡例自動化版) ---
 # ---------------------------
 def page_graph_plotting():
     st.header("📈 高機能グラフ描画")
     st.markdown("論文・レポート用の美しいグラフを作成します。詳細設定が可能です。")
 
-    # データを格納するリスト
     data_list = []
 
     # --- 1. データ入力セクション ---
@@ -338,7 +337,6 @@ def page_graph_plotting():
                 success = False
                 raw_bytes = f.getvalue() 
                 
-                # 文字コード判定
                 decoded_content = None
                 for enc in encodings_to_try:
                     try:
@@ -352,11 +350,9 @@ def page_graph_plotting():
                     st.error(f"❌ {f.name} の読み込みに失敗しました。")
                     continue
 
-                # データ抽出
                 lines = [l.strip() for l in decoded_content.splitlines() if l.strip() and not l.strip().startswith(('#','!','/'))]
                 if not lines: continue
 
-                # ヘッダー判定
                 header_opt = 'infer'
                 first_line_parts = lines[0].split()
                 if first_line_parts:
@@ -364,7 +360,6 @@ def page_graph_plotting():
                     if first_val.replace('.', '', 1).replace('-', '', 1).isdigit():
                         header_opt = None
                 
-                # 読み込み試行
                 read_success = False
                 try:
                     df = pd.read_csv(io.StringIO("\n".join(lines)), sep=',', engine='python', header=header_opt)
@@ -376,26 +371,24 @@ def page_graph_plotting():
                     except: pass
 
                 if read_success and df is not None and not df.empty:
-                    # 列名のクリーニング
                     if all(isinstance(col, int) for col in df.columns):
                         df.columns = [f"Col {i+1}" for i in range(df.shape[1])]
                     df.columns = [str(c).strip() for c in df.columns]
-                    
                     data_list.append({"name": f.name, "df": df})
 
     # === Tab 2: コピー＆ペースト入力 ===
     with tab2:
-        st.info("Excelのセル範囲をコピーして、ここに貼り付けてください（Ctrl+V）。")
-        paste_text = st.text_area("データ貼り付けエリア", height=200, placeholder="ここにデータを貼り付け...")
-        paste_name = st.text_input("データ名 (凡例用)", value="Pasted Data")
+        st.info("Excelのセル範囲（ヘッダー含む）をコピーして、ここに貼り付けてください。")
+        paste_text = st.text_area("データ貼り付けエリア", height=200, placeholder="Wavelength  Int1  Int2 ...\n400         10    20 ...")
+        
+        # ※ ここでの「データ名」はファイル名のような扱いになります。凡例はヘッダー行が使われます。
+        paste_name = st.text_input("データセット名 (管理用)", value="Pasted Data")
 
         if paste_text:
             try:
-                # Excelからのコピペは通常タブ区切りだが、スペースやカンマも許容する
                 lines = [l.strip() for l in paste_text.splitlines() if l.strip() and not l.strip().startswith(('#','!','/'))]
                 
                 if lines:
-                    # ヘッダー判定
                     header_opt = 'infer'
                     first_line_parts = lines[0].split()
                     if first_line_parts:
@@ -403,11 +396,9 @@ def page_graph_plotting():
                         if first_val.replace('.', '', 1).replace('-', '', 1).isdigit():
                             header_opt = None
 
-                    # 読み込み
                     df_paste = pd.read_csv(io.StringIO("\n".join(lines)), sep=r'[\t, ]+', engine='python', header=header_opt)
                     
                     if df_paste is not None and not df_paste.empty:
-                        # 列名のクリーニング
                         if all(isinstance(col, int) for col in df_paste.columns):
                             df_paste.columns = [f"Col {i+1}" for i in range(df_paste.shape[1])]
                         df_paste.columns = [str(c).strip() for c in df_paste.columns]
@@ -419,18 +410,16 @@ def page_graph_plotting():
             except Exception as e:
                 st.error(f"読み込みエラー: {e}")
 
-    # --- データがない場合はここで終了 ---
-    if not data_list:
-        return
+    if not data_list: return
 
-    # --- 2. グラフ詳細設定 (既存コードと同じ) ---
+    # --- 2. グラフ詳細設定 ---
     st.markdown("### 2. グラフ詳細設定")
     
     col_settings, col_preview = st.columns([1, 2])
 
     with col_settings:
         with st.expander("📊 キャンバスとフォント (全体)", expanded=True):
-            fig_w = st.number_input("幅 (inch)", 1.0, 50.0, 8.0, step=0.5)
+            fig_w = st.number_input("幅 (inch)", 1.0, 50.0, 10.0, step=0.5)
             fig_h = st.number_input("高さ (inch)", 1.0, 50.0, 6.0, step=0.5)
             font_size = st.number_input("基本フォントサイズ", 6, 50, 14)
             font_family = st.selectbox("フォント", ["Arial", "Times New Roman", "Helvetica", "Hiragino Maru Gothic Pro", "Meiryo"])
@@ -440,7 +429,7 @@ def page_graph_plotting():
 
         with st.expander("📐 軸 (Axes) と グリッド"):
             st.markdown("**X軸設定**")
-            x_label = st.text_input("X軸ラベル", "X Axis")
+            x_label = st.text_input("X軸ラベル", data_list[0]['df'].columns[0] if data_list else "X Axis")
             x_log = st.checkbox("X軸 対数表示", False)
             x_inv = st.checkbox("X軸 反転", False)
             x_min = st.number_input("X最小 (Auto=0)", value=0.0)
@@ -448,7 +437,7 @@ def page_graph_plotting():
             
             st.markdown("---")
             st.markdown("**Y軸設定**")
-            y_label = st.text_input("Y軸ラベル", "Y Axis")
+            y_label = st.text_input("Y軸ラベル", "Intensity (a.u.)")
             y_log = st.checkbox("Y軸 対数表示", False)
             y_inv = st.checkbox("Y軸 反転", False)
             y_min = st.number_input("Y最小 (Auto=0)", value=0.0)
@@ -460,37 +449,47 @@ def page_graph_plotting():
             show_grid = st.checkbox("グリッド線を表示", True)
             minor_grid = st.checkbox("補助目盛 (Minor Grid)", False)
 
-        with st.expander("📈 プロットスタイル (データ系列)"):
-            st.info("データごとにスタイルを変更できます。")
+        with st.expander("📈 プロットスタイル (データ系列)", expanded=True):
+            st.info("複数のY列を選択すると、列名が凡例になります。")
             
             plot_configs = []
             for i, d in enumerate(data_list):
                 st.markdown(f"**Data: {d['name']}**")
                 cols = d['df'].columns.tolist()
-                c1, c2, c3 = st.columns(3)
-                default_x = 0
-                default_y = 1 if len(cols) > 1 else 0
                 
-                x_col = c1.selectbox(f"X列 ({i})", cols, index=default_x, key=f"x_{i}")
-                y_col = c2.selectbox(f"Y列 ({i})", cols, index=default_y, key=f"y_{i}")
+                # X列選択
+                c1, c2 = st.columns([1, 2])
+                x_col = c1.selectbox(f"X列", cols, index=0, key=f"x_{i}")
                 
-                use_error = c3.checkbox(f"エラーバー ({i})", False, key=f"use_err_{i}")
-                y_err_col = None
-                if use_error:
-                    y_err_col = st.selectbox(f"Y誤差列 ({i})", ["定数(5%)"] + cols, key=f"yerr_{i}")
+                # Y列複数選択 (デフォルトは2列目以降すべて)
+                default_ys = cols[1:] if len(cols) > 1 else []
+                y_cols = c2.multiselect(f"Y列 (複数選択可)", cols, default=default_ys, key=f"y_{i}")
                 
+                # スタイル設定
                 cc1, cc2, cc3 = st.columns(3)
-                color = cc1.color_picker(f"色 ({i})", value=["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"][i%5], key=f"col_{i}")
-                marker = cc2.selectbox(f"マーカー ({i})", ["None", "o", "s", "^", "D", "x"], index=0, key=f"mark_{i}")
-                linestyle = cc3.selectbox(f"線種 ({i})", ["-", "--", "-.", ":", "None"], index=0, key=f"line_{i}")
+                auto_color = cc1.checkbox(f"自動色割り当て", True, key=f"acol_{i}")
+                manual_color = "#1f77b4"
+                if not auto_color:
+                    manual_color = cc1.color_picker(f"単一色指定", value="#1f77b4", key=f"mcol_{i}")
                 
-                label_txt = st.text_input(f"凡例ラベル ({i})", d['name'], key=f"leg_{i}")
+                marker = cc2.selectbox(f"マーカー", ["None", "o", "s", "^", "D", "x"], index=0, key=f"mark_{i}")
+                linestyle = cc3.selectbox(f"線種", ["-", "--", "-.", ":", "None"], index=0, key=f"line_{i}")
                 
+                # エラーバー (Y列が1つの時のみ有効化など簡易化)
+                y_err_col = None
+                if len(y_cols) == 1:
+                    if st.checkbox(f"エラーバーを追加", False, key=f"use_err_{i}"):
+                        y_err_col = st.selectbox(f"Y誤差列", ["定数(5%)"] + cols, key=f"yerr_{i}")
+
                 plot_configs.append({
                     "data": d['df'],
-                    "x": x_col, "y": y_col, "y_err": y_err_col,
-                    "color": color, "marker": marker, "linestyle": linestyle,
-                    "label": label_txt
+                    "x": x_col, 
+                    "ys": y_cols, # リスト
+                    "y_err": y_err_col,
+                    "auto_color": auto_color,
+                    "manual_color": manual_color,
+                    "marker": marker, 
+                    "linestyle": linestyle
                 })
                 st.markdown("---")
 
@@ -498,6 +497,7 @@ def page_graph_plotting():
             show_legend = st.checkbox("凡例を表示", True)
             legend_loc = st.selectbox("凡例位置", ["best", "upper right", "upper left", "lower right", "lower left"], index=0)
             legend_frame = st.checkbox("凡例枠を表示", True)
+            legend_cols = st.number_input("凡例の列数", 1, 5, 1)
             
             st.markdown("**テキスト注釈 (任意)**")
             ann_text = st.text_input("テキスト", "")
@@ -510,32 +510,49 @@ def page_graph_plotting():
         
         fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=dpi_val)
         
+        # カラーサイクル (自動色割り当て用)
+        prop_cycle = plt.rcParams['axes.prop_cycle']
+        colors = prop_cycle.by_key()['color']
+        color_idx = 0
+
         for cfg in plot_configs:
             df = cfg['data']
             x_data = df[cfg['x']]
-            y_data = df[cfg['y']]
             
-            ms = 6
-            lw = 1.5
-            if cfg['marker'] == 'None': cfg['marker'] = None
-            if cfg['linestyle'] == 'None': cfg['linestyle'] = 'None'
-            
-            if cfg.get('y_err'):
-                if cfg['y_err'] == "定数(5%)":
-                    y_err = y_data * 0.05
-                else:
-                    y_err = df[cfg['y_err']]
+            # 選択された複数のY列をループしてプロット
+            for y_col_name in cfg['ys']:
+                y_data = df[y_col_name]
                 
-                ax.errorbar(x_data, y_data, yerr=y_err, 
-                            label=cfg['label'], color=cfg['color'],
-                            marker=cfg['marker'], linestyle=cfg['linestyle'],
-                            capsize=4, markersize=ms, linewidth=lw)
-            else:
-                ax.plot(x_data, y_data, 
-                        label=cfg['label'], color=cfg['color'],
-                        marker=cfg['marker'], linestyle=cfg['linestyle'],
-                        markersize=ms, linewidth=lw)
+                # 色の決定
+                if cfg['auto_color']:
+                    c = colors[color_idx % len(colors)]
+                    color_idx += 1
+                else:
+                    c = cfg['manual_color']
 
+                ms = 6
+                lw = 1.5
+                mk = None if cfg['marker'] == 'None' else cfg['marker']
+                ls = 'None' if cfg['linestyle'] == 'None' else cfg['linestyle']
+                
+                # エラーバー
+                if cfg.get('y_err'):
+                    if cfg['y_err'] == "定数(5%)":
+                        y_err = y_data * 0.05
+                    else:
+                        y_err = df[cfg['y_err']]
+                    
+                    ax.errorbar(x_data, y_data, yerr=y_err, 
+                                label=y_col_name, # 列名をそのままラベルに使用
+                                color=c, marker=mk, linestyle=ls,
+                                capsize=4, markersize=ms, linewidth=lw)
+                else:
+                    ax.plot(x_data, y_data, 
+                            label=y_col_name, # 列名をそのままラベルに使用
+                            color=c, marker=mk, linestyle=ls,
+                            markersize=ms, linewidth=lw)
+
+        # 軸設定
         ax.set_xlabel(x_label)
         ax.set_ylabel(y_label)
         
@@ -556,7 +573,7 @@ def page_graph_plotting():
             ax.grid(True, which='minor', linestyle=':', alpha=0.3)
             
         if show_legend:
-            ax.legend(loc=legend_loc, frameon=legend_frame)
+            ax.legend(loc=legend_loc, frameon=legend_frame, ncol=legend_cols)
             
         if ann_text:
             ax.text(ann_x, ann_y, ann_text, fontsize=font_size)
@@ -572,7 +589,6 @@ def page_graph_plotting():
         buf_svg = BytesIO()
         fig.savefig(buf_svg, format="svg")
         st.download_button("ベクター画像 (SVG) を保存", buf_svg.getvalue(), "graph.svg", "image/svg")
-
 # ---------------------------
 # --- Components ---
 # ---------------------------
@@ -1033,6 +1049,7 @@ if __name__ == "__main__":
     except Exception:
         pass
     main()
+
 
 
 
