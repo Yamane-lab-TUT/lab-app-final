@@ -315,280 +315,343 @@ def load_pl_data(uploaded_file):
 # ---------------------------
 # --- NEW: General Graph Plotting Page (複数Y軸対応・凡例自動化版) ---
 # ---------------------------
+# ---------------------------
+# --- NEW: General Graph Plotting Page (Sticky Preview Edition) ---
+# ---------------------------
 def page_graph_plotting():
     st.header("📈 高機能グラフ描画")
     st.markdown("論文・レポート用の美しいグラフを作成します。詳細設定が可能です。")
 
+    # --- CSS Injection for Sticky Preview ---
+    # 右側のプレビューカラム(2列目)をスクロール追従させるCSS
+    st.markdown("""
+        <style>
+        /* メインエリアの2列目のカラムをStickyにする */
+        /* ※ 他の要素（Expander内など）への影響を避けるため、階層を限定する工夫が必要ですが、
+           ここでは簡易的に全体適用しつつ、Expander内を打ち消します */
+        
+        div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:nth-of-type(2) {
+            position: sticky;
+            top: 4rem; /* 画面上部からの距離 */
+            align-self: start; /* 高さを親に合わせず、コンテンツに合わせる */
+            z-index: 999;
+        }
+
+        /* 設定メニュー(Expander)内の2列目カラムはStickyにしない（リセット） */
+        div[data-testid="stExpander"] div[data-testid="stColumn"] {
+            position: static !important;
+        }
+        
+        /* タブ内の2列目カラムもリセット */
+        div[data-testid="stTabs"] div[data-testid="stColumn"] {
+            position: static !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
     data_list = []
 
-    # --- 1. データ入力セクション ---
+    # ==========================================
+    # 1. データ入力セクション
+    # ==========================================
     st.subheader("1. データの入力")
-    
     tab1, tab2 = st.tabs(["📂 ファイルから読み込み", "📋 テキストを貼り付け (Excelから)"])
 
-    # === Tab 1: ファイルアップロード ===
+    # --- Tab 1: ファイルアップロード ---
     with tab1:
         files = st.file_uploader("テキスト/CSVファイルを選択 (複数可)", accept_multiple_files=True, key="gp_uploader")
-        
         if files:
             encodings_to_try = ['utf-8', 'shift_jis', 'cp932', 'euc_jp']
             for f in files:
                 df = None
-                success = False
-                raw_bytes = f.getvalue() 
-                
-                decoded_content = None
-                for enc in encodings_to_try:
-                    try:
-                        decoded_content = raw_bytes.decode(enc)
-                        success = True
-                        break
-                    except Exception:
-                        continue
-
-                if not success or decoded_content is None:
-                    st.error(f"❌ {f.name} の読み込みに失敗しました。")
-                    continue
-
-                lines = [l.strip() for l in decoded_content.splitlines() if l.strip() and not l.strip().startswith(('#','!','/'))]
-                if not lines: continue
-
-                header_opt = 'infer'
-                first_line_parts = lines[0].split()
-                if first_line_parts:
-                    first_val = first_line_parts[0].replace(',', '') 
-                    if first_val.replace('.', '', 1).replace('-', '', 1).isdigit():
-                        header_opt = None
-                
-                read_success = False
+                # Step 1: Excelとして試行
                 try:
-                    df = pd.read_csv(io.StringIO("\n".join(lines)), sep=',', engine='python', header=header_opt)
-                    read_success = True
+                    f.seek(0)
+                    df = pd.read_excel(f, engine='openpyxl')
                 except:
-                    try:
-                        df = pd.read_csv(io.StringIO("\n".join(lines)), sep=r'[\t ]+', engine='python', header=header_opt)
-                        read_success = True
-                    except: pass
+                    df = None
 
-                if read_success and df is not None and not df.empty:
+                # Step 2: テキストとして試行
+                if df is None:
+                    raw_bytes = f.getvalue()
+                    decoded_content = None
+                    for enc in encodings_to_try:
+                        try:
+                            decoded_content = raw_bytes.decode(enc)
+                            break
+                        except: continue
+                    
+                    if decoded_content:
+                        lines = [l.strip() for l in decoded_content.splitlines() if l.strip() and not l.strip().startswith(('#','!','/'))]
+                        if lines:
+                            header_opt = 'infer'
+                            try:
+                                first_val = lines[0].split()[0].replace(',', '')
+                                if first_val.replace('.', '', 1).replace('-', '', 1).isdigit():
+                                    header_opt = None
+                            except: pass
+
+                            try:
+                                df = pd.read_csv(io.StringIO("\n".join(lines)), sep=',', engine='python', header=header_opt)
+                            except:
+                                try:
+                                    df = pd.read_csv(io.StringIO("\n".join(lines)), sep=r'[\t ]+', engine='python', header=header_opt)
+                                except: pass
+
+                if df is not None and not df.empty:
+                    # 列名のクリーニング
                     if all(isinstance(col, int) for col in df.columns):
                         df.columns = [f"Col {i+1}" for i in range(df.shape[1])]
                     df.columns = [str(c).strip() for c in df.columns]
                     data_list.append({"name": f.name, "df": df})
+                else:
+                    st.error(f"❌ {f.name} の読み込みに失敗しました。")
 
-    # === Tab 2: コピー＆ペースト入力 ===
+    # --- Tab 2: コピペ ---
     with tab2:
-        st.info("Excelのセル範囲（ヘッダー含む）をコピーして、ここに貼り付けてください。")
-        paste_text = st.text_area("データ貼り付けエリア", height=200, placeholder="Wavelength  Int1  Int2 ...\n400         10    20 ...")
-        
-        # ※ ここでの「データ名」はファイル名のような扱いになります。凡例はヘッダー行が使われます。
-        paste_name = st.text_input("データセット名 (管理用)", value="Pasted Data")
-
+        st.info("Excelのセル範囲をコピーして貼り付けてください。")
+        paste_text = st.text_area("データ貼り付けエリア", height=150)
+        paste_name = st.text_input("データセット名", value="Pasted Data")
         if paste_text:
             try:
                 lines = [l.strip() for l in paste_text.splitlines() if l.strip() and not l.strip().startswith(('#','!','/'))]
-                
                 if lines:
                     header_opt = 'infer'
-                    first_line_parts = lines[0].split()
-                    if first_line_parts:
-                        first_val = first_line_parts[0].replace(',', '')
-                        if first_val.replace('.', '', 1).replace('-', '', 1).isdigit():
-                            header_opt = None
-
+                    try:
+                        first_val = lines[0].split()[0].replace(',', '')
+                        if first_val.replace('.', '', 1).replace('-', '', 1).isdigit(): header_opt = None
+                    except: pass
                     df_paste = pd.read_csv(io.StringIO("\n".join(lines)), sep=r'[\t, ]+', engine='python', header=header_opt)
-                    
                     if df_paste is not None and not df_paste.empty:
                         if all(isinstance(col, int) for col in df_paste.columns):
                             df_paste.columns = [f"Col {i+1}" for i in range(df_paste.shape[1])]
                         df_paste.columns = [str(c).strip() for c in df_paste.columns]
-
                         data_list.append({"name": paste_name, "df": df_paste})
-                        st.success(f"✅ データを読み込みました: {df_paste.shape[0]}行, {df_paste.shape[1]}列")
-                    else:
-                        st.warning("有効なデータとして認識できませんでした。")
-            except Exception as e:
-                st.error(f"読み込みエラー: {e}")
+            except: pass
 
     if not data_list: return
 
-    # --- 2. グラフ詳細設定 ---
+    # ==========================================
+    # 2. グラフ詳細設定
+    # ==========================================
     st.markdown("### 2. グラフ詳細設定")
     
-    col_settings, col_preview = st.columns([1, 2])
+    # 画面分割 (左:設定, 右:プレビュー)
+    col_settings, col_preview = st.columns([1.3, 2]) 
 
+    # --- 左側：設定パネル ---
     with col_settings:
-        with st.expander("📊 キャンバスとフォント (全体)", expanded=True):
-            fig_w = st.number_input("幅 (inch)", 1.0, 50.0, 10.0, step=0.5)
-            fig_h = st.number_input("高さ (inch)", 1.0, 50.0, 6.0, step=0.5)
-            font_size = st.number_input("基本フォントサイズ", 6, 50, 14)
-            font_family = st.selectbox("フォント", ["Arial", "Times New Roman", "Helvetica", "Hiragino Maru Gothic Pro", "Meiryo"])
-            plt.rcParams['font.family'] = font_family
-            plt.rcParams['font.size'] = font_size
+        
+        # --- A. キャンバスとフォント ---
+        with st.expander("📊 キャンバス・フォント設定", expanded=True):
+            c1, c2 = st.columns(2)
+            fig_w = c1.number_input("幅 (inch)", 1.0, 50.0, 8.0, step=0.5)
+            fig_h = c2.number_input("高さ (inch)", 1.0, 50.0, 6.0, step=0.5)
+            
             dpi_val = st.number_input("解像度 (DPI)", 72, 1200, 150)
+            
+            st.markdown("**フォント設定**")
+            font_family_name = st.selectbox("フォント名", 
+                                       ["Arial", "Times New Roman", "Helvetica", 
+                                        "Hiragino Maru Gothic Pro", "Meiryo", "Yu Gothic", "TakaoGothic"])
+            base_font_size = st.number_input("基本フォントサイズ", 6, 50, 14)
 
+        # --- B. 軸設定 ---
         with st.expander("📐 軸 (Axes) と グリッド"):
-            st.markdown("**X軸設定**")
-            x_label = st.text_input("X軸ラベル", data_list[0]['df'].columns[0] if data_list else "X Axis")
-            x_log = st.checkbox("X軸 対数表示", False)
-            x_inv = st.checkbox("X軸 反転", False)
-            x_min = st.number_input("X最小 (Auto=0)", value=0.0)
-            x_max = st.number_input("X最大 (Auto=0)", value=0.0)
-            
-            st.markdown("---")
-            st.markdown("**Y軸設定**")
-            y_label = st.text_input("Y軸ラベル", "Intensity (a.u.)")
-            y_log = st.checkbox("Y軸 対数表示", False)
-            y_inv = st.checkbox("Y軸 反転", False)
-            y_min = st.number_input("Y最小 (Auto=0)", value=0.0)
-            y_max = st.number_input("Y最大 (Auto=0)", value=0.0)
-            
-            st.markdown("---")
-            st.markdown("**目盛・グリッド**")
-            tick_dir = st.selectbox("目盛の向き", ["in", "out", "inout"], index=0)
-            show_grid = st.checkbox("グリッド線を表示", True)
-            minor_grid = st.checkbox("補助目盛 (Minor Grid)", False)
+            tabs_ax = st.tabs(["X軸", "Y軸", "グリッド"])
+            with tabs_ax[0]:
+                x_label = st.text_input("X軸ラベル", "X Axis")
+                c1, c2 = st.columns(2)
+                x_min = c1.number_input("X最小 (0=Auto)", value=0.0)
+                x_max = c2.number_input("X最大 (0=Auto)", value=0.0)
+                x_log = st.checkbox("対数表示 (Log)", False, key="xlog")
+                x_inv = st.checkbox("軸反転", False, key="xinv")
+            with tabs_ax[1]:
+                y_label = st.text_input("Y軸ラベル", "Intensity (a.u.)")
+                c1, c2 = st.columns(2)
+                y_min = c1.number_input("Y最小 (0=Auto)", value=0.0)
+                y_max = c2.number_input("Y最大 (0=Auto)", value=0.0)
+                y_log = st.checkbox("対数表示 (Log)", False, key="ylog")
+                y_inv = st.checkbox("軸反転", False, key="yinv")
+            with tabs_ax[2]:
+                tick_dir = st.selectbox("目盛の向き", ["in", "out", "inout"], index=0)
+                show_grid = st.checkbox("グリッド線を表示", False) 
+                minor_grid = st.checkbox("補助目盛 (Minor)", False)
 
-        with st.expander("📈 プロットスタイル (データ系列)", expanded=True):
-            st.info("複数のY列を選択すると、列名が凡例になります。")
+        # --- C. 凡例設定 ---
+        with st.expander("📝 凡例 (Legend)"):
+            show_legend = st.checkbox("凡例を表示", True)
+            if show_legend:
+                c1, c2 = st.columns(2)
+                legend_loc = c1.selectbox("位置", ["best", "upper right", "upper left", "lower right", "lower left", "outside right"], index=0)
+                legend_cols = c2.number_input("列数", 1, 10, 1)
+                
+                c3, c4 = st.columns(2)
+                legend_fontsize = c3.number_input("文字サイズ", 6, 40, int(base_font_size))
+                legend_frame = c4.checkbox("枠線を表示", False)
+
+        # --- D. プロットデータ設定 (個別詳細設定) ---
+        with st.expander("📈 データ系列の個別設定", expanded=True):
+            st.caption("ファイルごとにX軸と、プロットするY軸（複数可）を選択してください。")
             
-            plot_configs = []
+            final_plot_configs = []
+            
+            # カラーサイクル
+            prop_cycle = plt.rcParams['axes.prop_cycle']
+            default_colors = prop_cycle.by_key()['color']
+            color_counter = 0
+
             for i, d in enumerate(data_list):
-                st.markdown(f"**Data: {d['name']}**")
+                st.markdown(f"---")
+                st.markdown(f"**📂 {d['name']}**")
                 cols = d['df'].columns.tolist()
                 
-                # X列選択
-                c1, c2 = st.columns([1, 2])
-                x_col = c1.selectbox(f"X列", cols, index=0, key=f"x_{i}")
+                # X軸選択
+                x_col = st.selectbox(f"X軸 ({i})", cols, index=0, key=f"x_sel_{i}")
                 
-                # Y列複数選択 (デフォルトは2列目以降すべて)
+                # Y軸複数選択
                 default_ys = cols[1:] if len(cols) > 1 else []
-                y_cols = c2.multiselect(f"Y列 (複数選択可)", cols, default=default_ys, key=f"y_{i}")
+                y_cols = st.multiselect(f"Y軸 (プロットする列を選択)", cols, default=default_ys, key=f"y_sel_{i}")
                 
-                # スタイル設定
-                cc1, cc2, cc3 = st.columns(3)
-                auto_color = cc1.checkbox(f"自動色割り当て", True, key=f"acol_{i}")
-                manual_color = "#1f77b4"
-                if not auto_color:
-                    manual_color = cc1.color_picker(f"単一色指定", value="#1f77b4", key=f"mcol_{i}")
-                
-                marker = cc2.selectbox(f"マーカー", ["None", "o", "s", "^", "D", "x"], index=0, key=f"mark_{i}")
-                linestyle = cc3.selectbox(f"線種", ["-", "--", "-.", ":", "None"], index=0, key=f"line_{i}")
-                
-                # エラーバー (Y列が1つの時のみ有効化など簡易化)
-                y_err_col = None
-                if len(y_cols) == 1:
-                    if st.checkbox(f"エラーバーを追加", False, key=f"use_err_{i}"):
-                        y_err_col = st.selectbox(f"Y誤差列", ["定数(5%)"] + cols, key=f"yerr_{i}")
+                if y_cols:
+                    st.markdown("👇 **系列ごとのスタイル設定**")
+                    for j, y_name in enumerate(y_cols):
+                        uid = f"{i}_{j}"
+                        def_color = default_colors[color_counter % len(default_colors)]
+                        color_counter += 1
+                        
+                        with st.expander(f"🖍️ {y_name} の設定", expanded=False):
+                            c1, c2 = st.columns(2)
+                            label_txt = c1.text_input("凡例ラベル", value=y_name, key=f"lbl_{uid}")
+                            color_val = c2.color_picker("色", value=def_color, key=f"col_{uid}")
+                            
+                            c3, c4 = st.columns(2)
+                            marker_val = c3.selectbox("マーカー", ["None", "o", "s", "^", "D", "x", "."], index=0, key=f"mrk_{uid}")
+                            line_val = c4.selectbox("線種", ["-", "--", "-.", ":", "None"], index=0, key=f"ln_{uid}")
+                            
+                            st.markdown("errors (任意)")
+                            ce1, ce2 = st.columns(2)
+                            y_err_plus = ce1.selectbox("＋誤差列 (上)", ["None"] + cols, key=f"ep_{uid}")
+                            y_err_minus = ce2.selectbox("－誤差列 (下)", ["None"] + cols, key=f"em_{uid}")
+                            
+                            final_plot_configs.append({
+                                "df": d['df'],
+                                "x": x_col,
+                                "y": y_name,
+                                "label": label_txt,
+                                "color": color_val,
+                                "marker": marker_val if marker_val != "None" else None,
+                                "linestyle": line_val if line_val != "None" else "", 
+                                "ls_raw": line_val,
+                                "err_p": y_err_plus,
+                                "err_m": y_err_minus
+                            })
 
-                plot_configs.append({
-                    "data": d['df'],
-                    "x": x_col, 
-                    "ys": y_cols, # リスト
-                    "y_err": y_err_col,
-                    "auto_color": auto_color,
-                    "manual_color": manual_color,
-                    "marker": marker, 
-                    "linestyle": linestyle
-                })
-                st.markdown("---")
-
-        with st.expander("📝 凡例と注釈"):
-            show_legend = st.checkbox("凡例を表示", True)
-            legend_loc = st.selectbox("凡例位置", ["best", "upper right", "upper left", "lower right", "lower left"], index=0)
-            legend_frame = st.checkbox("凡例枠を表示", True)
-            legend_cols = st.number_input("凡例の列数", 1, 5, 1)
-            
-            st.markdown("**テキスト注釈 (任意)**")
-            ann_text = st.text_input("テキスト", "")
-            ann_x = st.number_input("X座標", value=0.0)
-            ann_y = st.number_input("Y座標", value=0.0)
-
-    # --- 3. 描画実行 (プレビュー) ---
+    # ==========================================
+    # 3. 描画実行 (プレビュー)
+    # ==========================================
     with col_preview:
         st.subheader("プレビュー")
         
+        plt.rcParams['font.size'] = base_font_size
+        if font_family_name in ["Times New Roman", "Hiragino Maru Gothic Pro", "Meiryo"]:
+            plt.rcParams['font.family'] = 'serif'
+            plt.rcParams['font.serif'] = [font_family_name]
+        else:
+            plt.rcParams['font.family'] = 'sans-serif'
+            plt.rcParams['font.sans-serif'] = [font_family_name]
+
         fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=dpi_val)
         
-        # カラーサイクル (自動色割り当て用)
-        prop_cycle = plt.rcParams['axes.prop_cycle']
-        colors = prop_cycle.by_key()['color']
-        color_idx = 0
-
-        for cfg in plot_configs:
-            df = cfg['data']
-            x_data = df[cfg['x']]
+        for cfg in final_plot_configs:
+            df_plot = cfg['df']
+            x_data = df_plot[cfg['x']]
+            y_data = df_plot[cfg['y']]
             
-            # 選択された複数のY列をループしてプロット
-            for y_col_name in cfg['ys']:
-                y_data = df[y_col_name]
+            yerr = None
+            if cfg['err_p'] != "None" or cfg['err_m'] != "None":
+                if cfg['err_p'] != "None": ep = df_plot[cfg['err_p']]
+                else: ep = np.zeros_like(y_data)
                 
-                # 色の決定
-                if cfg['auto_color']:
-                    c = colors[color_idx % len(colors)]
-                    color_idx += 1
-                else:
-                    c = cfg['manual_color']
-
-                ms = 6
-                lw = 1.5
-                mk = None if cfg['marker'] == 'None' else cfg['marker']
-                ls = 'None' if cfg['linestyle'] == 'None' else cfg['linestyle']
+                if cfg['err_m'] != "None": em = df_plot[cfg['err_m']]
+                else: em = np.zeros_like(y_data)
                 
-                # エラーバー
-                if cfg.get('y_err'):
-                    if cfg['y_err'] == "定数(5%)":
-                        y_err = y_data * 0.05
-                    else:
-                        y_err = df[cfg['y_err']]
-                    
-                    ax.errorbar(x_data, y_data, yerr=y_err, 
-                                label=y_col_name, # 列名をそのままラベルに使用
-                                color=c, marker=mk, linestyle=ls,
-                                capsize=4, markersize=ms, linewidth=lw)
-                else:
-                    ax.plot(x_data, y_data, 
-                            label=y_col_name, # 列名をそのままラベルに使用
-                            color=c, marker=mk, linestyle=ls,
-                            markersize=ms, linewidth=lw)
+                yerr = [em, ep]
 
-        # 軸設定
+            ls_arg = cfg['linestyle']
+            if cfg['ls_raw'] == "None": ls_arg = 'none'
+
+            ax.errorbar(
+                x_data, y_data,
+                yerr=yerr,
+                label=cfg['label'],
+                color=cfg['color'],
+                marker=cfg['marker'],
+                linestyle=ls_arg,
+                markersize=6,
+                capsize=4,
+                linewidth=1.5
+            )
+
         ax.set_xlabel(x_label)
         ax.set_ylabel(y_label)
         
         if x_log: ax.set_xscale('log')
         if y_log: ax.set_yscale('log')
-        
         if x_inv: ax.invert_xaxis()
         if y_inv: ax.invert_yaxis()
         
-        if x_min != 0 or x_max != 0: ax.set_xlim(left=x_min if x_min!=0 else None, right=x_max if x_max!=0 else None)
-        if y_min != 0 or y_max != 0: ax.set_ylim(bottom=y_min if y_min!=0 else None, top=y_max if y_max!=0 else None)
+        if x_min != 0 or x_max != 0: 
+            ax.set_xlim(left=x_min if x_min!=0 else None, right=x_max if x_max!=0 else None)
+        if y_min != 0 or y_max != 0: 
+            ax.set_ylim(bottom=y_min if y_min!=0 else None, top=y_max if y_max!=0 else None)
         
-        ax.tick_params(direction=tick_dir, which='both', width=1)
+        ax.tick_params(direction=tick_dir, which='both', width=1, length=6)
+        if tick_dir == 'in':
+            ax.tick_params(top=True, right=True)
+            
         if show_grid:
             ax.grid(True, which='major', linestyle='-', alpha=0.6)
+        else:
+            ax.grid(False, which='major')
+            
         if minor_grid:
             ax.minorticks_on()
             ax.grid(True, which='minor', linestyle=':', alpha=0.3)
-            
+        else:
+            ax.minorticks_off()
+            ax.grid(False, which='minor')
+
         if show_legend:
-            ax.legend(loc=legend_loc, frameon=legend_frame, ncol=legend_cols)
+            bbox = None
+            loc_arg = legend_loc
+            if legend_loc == "outside right":
+                loc_arg = "center left"
+                bbox = (1.02, 0.5)
             
-        if ann_text:
-            ax.text(ann_x, ann_y, ann_text, fontsize=font_size)
+            ax.legend(
+                loc=loc_arg, 
+                bbox_to_anchor=bbox,
+                ncol=legend_cols,
+                fontsize=legend_fontsize,
+                frameon=legend_frame,
+                edgecolor='black' if legend_frame else None,
+                fancybox=False
+            )
 
         plt.tight_layout()
         st.pyplot(fig)
         
-        st.markdown("### 📥 保存")
+        st.markdown("### 📥 グラフの保存")
+        c_dl1, c_dl2 = st.columns(2)
+        
         buf = BytesIO()
-        fig.savefig(buf, format="png", dpi=300)
-        st.download_button("高解像度PNGを保存 (300dpi)", buf.getvalue(), "graph.png", "image/png")
+        fig.savefig(buf, format="png", dpi=300, bbox_inches='tight')
+        c_dl1.download_button("PNGを保存 (300dpi)", buf.getvalue(), "graph.png", "image/png")
         
         buf_svg = BytesIO()
-        fig.savefig(buf_svg, format="svg")
-        st.download_button("ベクター画像 (SVG) を保存", buf_svg.getvalue(), "graph.svg", "image/svg")
+        fig.savefig(buf_svg, format="svg", bbox_inches='tight')
+        c_dl2.download_button("SVGを保存 (ベクター)", buf_svg.getvalue(), "graph.svg", "image/svg")
 # ---------------------------
 # --- Components ---
 # ---------------------------
@@ -1049,6 +1112,7 @@ if __name__ == "__main__":
     except Exception:
         pass
     main()
+
 
 
 
