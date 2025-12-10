@@ -313,11 +313,11 @@ def load_pl_data(uploaded_file):
         return None
         
 # ---------------------------
-# --- NEW: General Graph Plotting Page (Log-Abs Auto Convert Edition) ---
+# --- NEW: General Graph Plotting Page (Trendline Edition) ---
 # ---------------------------
 def page_graph_plotting():
     st.header("📈 高機能グラフ描画")
-    st.markdown("論文・レポート用。**対数表示時は自動で絶対値**をとってプロットします。")
+    st.markdown("論文・レポート用。**近似曲線（多項式、指数、移動平均など）** を追加できます。")
 
     # --- CSS Injection for Sticky Preview ---
     st.markdown("""
@@ -536,35 +536,57 @@ def page_graph_plotting():
                         color_counter += 1
                         
                         with st.expander(f"🖍️ {y_name} の設定", expanded=False):
+                            # スタイル設定
                             c1, c2 = st.columns(2)
                             label_txt = c1.text_input("凡例ラベル", value=y_name, key=f"lbl_{uid}")
                             color_val = c2.color_picker("色", value=def_color, key=f"col_{uid}")
                             
                             c3, c4 = st.columns(2)
-                            target_x = c3.radio("X軸の配置", ["下 (Bottom)", "上 (Top)"], index=0, horizontal=True, key=f"tx_{uid}")
-                            target_y = c4.radio("Y軸の配置", ["左 (Left)", "右 (Right)"], index=0, horizontal=True, key=f"ty_{uid}")
+                            marker_val = c3.selectbox("マーカー", ["None", "o", "s", "^", "D", "x", "."], index=0, key=f"mrk_{uid}")
+                            line_val = c4.selectbox("線種", ["-", "--", "-.", ":", "None"], index=0, key=f"ln_{uid}")
                             
+                            # 軸の選択
                             c5, c6 = st.columns(2)
-                            marker_val = c5.selectbox("マーカー", ["None", "o", "s", "^", "D", "x", "."], index=0, key=f"mrk_{uid}")
-                            line_val = c6.selectbox("線種", ["-", "--", "-.", ":", "None"], index=0, key=f"ln_{uid}")
-                            
-                            st.markdown("errors (任意)")
+                            target_x = c5.radio("X軸", ["下", "上"], index=0, horizontal=True, key=f"tx_{uid}")
+                            target_y = c6.radio("Y軸", ["左", "右"], index=0, horizontal=True, key=f"ty_{uid}")
+
+                            # エラーバー設定
                             ce1, ce2 = st.columns(2)
-                            ep_sel = ce1.selectbox("＋誤差 (上)", ["なし", "手入力 (固定値)"] + cols, key=f"ep_sel_{uid}")
+                            ep_sel = ce1.selectbox("＋誤差 (上)", ["なし", "手入力"] + cols, key=f"ep_sel_{uid}")
                             ep_val = 0.0
-                            if ep_sel == "手入力 (固定値)": ep_val = ce1.number_input("値 (上)", value=1.0, key=f"ep_val_{uid}")
+                            if ep_sel == "手入力": ep_val = ce1.number_input("値 (上)", value=1.0, key=f"ep_val_{uid}")
                             
-                            em_sel = ce2.selectbox("－誤差 (下)", ["なし", "手入力 (固定値)"] + cols, key=f"em_sel_{uid}")
+                            em_sel = ce2.selectbox("－誤差 (下)", ["なし", "手入力"] + cols, key=f"em_sel_{uid}")
                             em_val = 0.0
-                            if em_sel == "手入力 (固定値)": em_val = ce2.number_input("値 (下)", value=1.0, key=f"em_val_{uid}")
+                            if em_sel == "手入力": em_val = ce2.number_input("値 (下)", value=1.0, key=f"em_val_{uid}")
                             
+                            # --- 近似曲線 (Trendline) ---
+                            st.markdown("📊 **近似曲線**")
+                            fit_type = st.selectbox("種類", ["なし", "線形近似 (Linear)", "多項式 (Polynomial)", "指数 (Exponential)", "対数 (Logarithmic)", "累乗 (Power)", "移動平均 (Moving Avg)"], key=f"fit_{uid}")
+                            
+                            fit_deg = 2
+                            fit_win = 5
+                            if "多項式" in fit_type:
+                                fit_deg = st.number_input("次数", 2, 6, 2, key=f"fit_d_{uid}")
+                            if "移動平均" in fit_type:
+                                fit_win = st.number_input("窓幅", 2, 100, 5, key=f"fit_w_{uid}")
+                            
+                            fit_col = color_val # デフォルトはデータと同じ色
+                            fit_ls = "--"
+                            if fit_type != "なし":
+                                cf1, cf2 = st.columns(2)
+                                fit_col = cf1.color_picker("近似色", value="#000000", key=f"fit_c_{uid}")
+                                fit_ls = cf2.selectbox("近似線種", ["--", "-", "-.", ":"], index=0, key=f"fit_l_{uid}")
+
                             final_plot_configs.append({
                                 "df": d['df'], "x": x_col, "y": y_name,
                                 "label": label_txt, "color": color_val,
                                 "marker": marker_val if marker_val != "None" else None,
                                 "linestyle": line_val if line_val != "None" else "", "ls_raw": line_val,
                                 "ep_mode": ep_sel, "ep_val": ep_val, "em_mode": em_sel, "em_val": em_val,
-                                "target_x": target_x, "target_y": target_y
+                                "target_x": target_x, "target_y": target_y,
+                                "fit_type": fit_type, "fit_deg": fit_deg, "fit_win": fit_win,
+                                "fit_col": fit_col, "fit_ls": fit_ls
                             })
 
     # ==========================================
@@ -594,25 +616,20 @@ def page_graph_plotting():
             ax4 = ax2.twiny()
             ax4.get_shared_x_axes().join(ax4, ax3)
 
-        # 軸設定の適用ヘルパー
+        # Helper
         def apply_axis_settings(ax, x_key, y_key):
             if ax is None: return
-            
-            # --- Label & Log ---
             ax.set_xlabel(ax_settings[x_key]['label'])
             if ax_settings[x_key]['log']: ax.set_xscale('log')
             if ax_settings[x_key]['inv']: ax.invert_xaxis()
             
-            # --- Range ---
             x_mi, x_ma = ax_settings[x_key]['min'], ax_settings[x_key]['max']
             if x_mi != 0 or x_ma != 0:
                 ax.set_xlim(left=x_mi if x_mi!=0 else None, right=x_ma if x_ma!=0 else None)
             
-            # --- Ticks Interval ---
             if ax_settings[x_key]['maj'] > 0: ax.xaxis.set_major_locator(ticker.MultipleLocator(ax_settings[x_key]['maj']))
             if ax_settings[x_key]['min_int'] > 0: ax.xaxis.set_minor_locator(ticker.MultipleLocator(ax_settings[x_key]['min_int']))
 
-            # Y Axis
             ax.set_ylabel(ax_settings[y_key]['label'])
             if ax_settings[y_key]['log']: ax.set_yscale('log')
             if ax_settings[y_key]['inv']: ax.invert_yaxis()
@@ -624,18 +641,13 @@ def page_graph_plotting():
             if ax_settings[y_key]['maj'] > 0: ax.yaxis.set_major_locator(ticker.MultipleLocator(ax_settings[y_key]['maj']))
             if ax_settings[y_key]['min_int'] > 0: ax.yaxis.set_minor_locator(ticker.MultipleLocator(ax_settings[y_key]['min_int']))
 
-            # Ticks Style
             ax.tick_params(which='major', direction=tick_dir, width=1.0, length=6.0)
             ax.tick_params(which='minor', direction=tick_dir, width=0.8, length=3.0)
 
         for cfg in final_plot_configs:
-            # ターゲット軸決定
             is_top = "上" in cfg['target_x']
             is_right = "右" in cfg['target_y']
-            
             target_ax = ax1
-            ax_key_x = 'x1'; ax_key_y = 'y1'
-            
             if is_top and is_right: 
                 target_ax = ax4
                 ax_key_x = 'x2'; ax_key_y = 'y2'
@@ -649,28 +661,39 @@ def page_graph_plotting():
             if target_ax is None: continue
 
             df_plot = cfg['df']
-            x_data = df_plot[cfg['x']].copy()
-            y_data = df_plot[cfg['y']].copy()
+            # 数値変換 & 欠損除去
+            temp_df = df_plot[[cfg['x'], cfg['y']]].apply(pd.to_numeric, errors='coerce').dropna()
             
-            # ★ 対数表示時の絶対値化 (重要) ★
+            # ソート（近似曲線のためにX順に並べ替え）
+            temp_df = temp_df.sort_values(by=cfg['x'])
+            
+            x_data = temp_df[cfg['x']]
+            y_data = temp_df[cfg['y']]
+            
+            # Log時は絶対値化
             if ax_settings[ax_key_x]['log']: x_data = x_data.abs()
             if ax_settings[ax_key_y]['log']: y_data = y_data.abs()
             
-            # Error Bars
+            # Error Bars Preparation
             yerr = None
-            if cfg['ep_mode'] == "なし": ep = np.zeros_like(y_data)
-            elif cfg['ep_mode'] == "手入力 (固定値)": ep = np.full_like(y_data, cfg['ep_val'])
-            else: ep = df_plot[cfg['ep_mode']]
+            ep_arr = np.zeros(len(temp_df)); em_arr = np.zeros(len(temp_df))
             
-            if cfg['em_mode'] == "なし": em = np.zeros_like(y_data)
-            elif cfg['em_mode'] == "手入力 (固定値)": em = np.full_like(y_data, cfg['em_val'])
-            else: em = df_plot[cfg['em_mode']]
+            # エラーバーは元のインデックスに合わせて取得する必要がある
+            if cfg['ep_mode'] != "なし":
+                if cfg['ep_mode'] == "手入力": ep_arr = np.full(len(temp_df), cfg['ep_val'])
+                else: ep_arr = df_plot.loc[temp_df.index, cfg['ep_mode']].apply(pd.to_numeric, errors='coerce').fillna(0).values
+            
+            if cfg['em_mode'] != "なし":
+                if cfg['em_mode'] == "手入力": em_arr = np.full(len(temp_df), cfg['em_val'])
+                else: em_arr = df_plot.loc[temp_df.index, cfg['em_mode']].apply(pd.to_numeric, errors='coerce').fillna(0).values
 
-            if np.any(ep > 0) or np.any(em > 0): yerr = [em, ep]
+            if np.any(ep_arr > 0) or np.any(em_arr > 0):
+                yerr = [em_arr, ep_arr]
 
             ls_arg = cfg['linestyle']
             if cfg['ls_raw'] == "None": ls_arg = 'none'
 
+            # Plot Data
             if yerr is not None:
                 target_ax.errorbar(x_data, y_data, yerr=yerr, label=cfg['label'], color=cfg['color'],
                             marker=cfg['marker'], linestyle=ls_arg, markersize=6, capsize=4, linewidth=1.5)
@@ -678,7 +701,54 @@ def page_graph_plotting():
                 target_ax.plot(x_data, y_data, label=cfg['label'], color=cfg['color'],
                         marker=cfg['marker'], linestyle=ls_arg, markersize=6, linewidth=1.5)
 
-        # Apply settings
+            # --- Trendline Calculation & Plotting ---
+            ft = cfg['fit_type']
+            if ft != "なし" and len(x_data) > 1:
+                try:
+                    x_fit = np.linspace(x_data.min(), x_data.max(), 500)
+                    y_fit = None
+                    
+                    if "線形" in ft:
+                        coef = np.polyfit(x_data, y_data, 1)
+                        y_fit = np.polyval(coef, x_fit)
+                    elif "多項式" in ft:
+                        coef = np.polyfit(x_data, y_data, cfg['fit_deg'])
+                        y_fit = np.polyval(coef, x_fit)
+                    elif "指数" in ft:
+                        # y = a * exp(b * x) -> log(y) = log(a) + b * x
+                        # y > 0 のデータのみ使用
+                        mask = y_data > 0
+                        if mask.sum() > 1:
+                            coef = np.polyfit(x_data[mask], np.log(y_data[mask]), 1)
+                            # coef[0] = b, coef[1] = log(a)
+                            a = np.exp(coef[1])
+                            b = coef[0]
+                            y_fit = a * np.exp(b * x_fit)
+                    elif "対数" in ft:
+                        # y = a * log(x) + b -> x > 0
+                        mask = x_data > 0
+                        if mask.sum() > 1:
+                            coef = np.polyfit(np.log(x_data[mask]), y_data[mask], 1)
+                            y_fit = coef[0] * np.log(x_fit) + coef[1]
+                    elif "累乗" in ft:
+                        # y = a * x^b -> log(y) = log(a) + b * log(x)
+                        mask = (x_data > 0) & (y_data > 0)
+                        if mask.sum() > 1:
+                            coef = np.polyfit(np.log(x_data[mask]), np.log(y_data[mask]), 1)
+                            a = np.exp(coef[1])
+                            b = coef[0]
+                            y_fit = a * (x_fit ** b)
+                    elif "移動平均" in ft:
+                        # 移動平均は元のX座標ベースで計算
+                        y_fit = y_data.rolling(window=cfg['fit_win'], center=True).mean()
+                        x_fit = x_data # 移動平均の場合は元のXを使う
+
+                    if y_fit is not None:
+                        target_ax.plot(x_fit, y_fit, color=cfg['fit_col'], linestyle=cfg['fit_ls'], linewidth=1.5, label=f"Fit: {cfg['label']}")
+
+                except Exception as e:
+                    pass # 計算エラー時は描画しない
+
         apply_axis_settings(ax1, 'x1', 'y1')
         if ax2: apply_axis_settings(ax2, 'x1', 'y2')
         if ax3: apply_axis_settings(ax3, 'x2', 'y1')
@@ -724,7 +794,6 @@ def page_graph_plotting():
         buf_svg = BytesIO()
         fig.savefig(buf_svg, format="svg", bbox_inches='tight')
         c_dl2.download_button("SVG (ベクター)", buf_svg.getvalue(), "graph.svg", "image/svg")
-
 
 
 # ---------------------------
@@ -1187,6 +1256,7 @@ if __name__ == "__main__":
     except Exception:
         pass
     main()
+
 
 
 
