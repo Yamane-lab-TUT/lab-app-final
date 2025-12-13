@@ -324,11 +324,11 @@ from datetime import datetime
 from io import BytesIO
 
 # ==========================================
-# 関数定義: page_graph_plotting (修正版 v7)
+# 関数定義: page_graph_plotting (凡例順序修正 v10)
 # ==========================================
 def page_graph_plotting():
     st.header("📈 統合型グラフ解析ツール")
-    st.markdown("凡例名の編集、凡例サイズの自動最適化に対応しました。")
+    st.markdown("凡例順序の不具合修正、凡例設定エリアでの並び替えに対応しました。")
 
     # --- CSS ---
     st.markdown("""
@@ -376,16 +376,15 @@ def page_graph_plotting():
         c_load, c_save = st.columns(2)
         with c_load:
             st.markdown("#### 📂 復元")
-            uploaded_project = st.file_uploader("プロジェクトファイル (.json)", type=["json"], key="project_loader_v7")
+            uploaded_project = st.file_uploader("プロジェクトファイル (.json)", type=["json"], key="project_loader_v10")
             if uploaded_project:
-                if st.button("設定を読み込む", key="btn_load_proj_v7"):
+                if st.button("設定を読み込む", key="btn_load_proj_v10"):
                     try:
                         project_data = json.load(uploaded_project)
                         restored_data_list = []
                         for item in project_data.get("datasets", []):
                             df_restored = pd.read_csv(io.StringIO(item["data_csv"]))
                             item['df'] = df_restored
-                            # 必須キー補完
                             for k, v in {"mppt": False, "show_eq": False, "legend_name": item.get('name', '')}.items():
                                 if k not in item: item[k] = v
                             restored_data_list.append(item)
@@ -400,7 +399,7 @@ def page_graph_plotting():
 
         with c_save:
             st.markdown("#### 💾 保存")
-            if st.button("プロジェクトファイルを作成", key="btn_save_proj_v7"):
+            if st.button("プロジェクトファイルを作成", key="btn_save_proj_v10"):
                 if not st.session_state['gp_data_list']:
                     st.warning("データなし")
                 else:
@@ -415,7 +414,7 @@ def page_graph_plotting():
                     
                     settings_snapshot = {}
                     for key, val in st.session_state.items():
-                        if key.startswith(("project_", "gp_", "btn_", "paste_", "fw_", "fh_", "dpi_", "ff_", "bfs_", "sleg", "lfont", "ax_preset", "legend_")): continue
+                        if key.startswith(("project_", "gp_", "btn_", "paste_", "fw_", "fh_", "dpi_", "ff_", "bfs_", "sleg", "lfont", "ax_preset", "legend_", "scale_sel")): continue
                         if isinstance(val, (int, float, str, bool, list, dict, type(None))):
                             settings_snapshot[key] = val
 
@@ -426,7 +425,7 @@ def page_graph_plotting():
                     }
                     json_str = json.dumps(project_obj, indent=2, ensure_ascii=False)
                     file_name = f"GraphProject_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
-                    st.download_button("⬇️ JSONをダウンロード", json_str, file_name, "application/json", key="dl_json_btn_v7")
+                    st.download_button("⬇️ JSONをダウンロード", json_str, file_name, "application/json", key="dl_json_btn_v10")
 
     # ==========================================
     # 1. データ入力
@@ -435,14 +434,14 @@ def page_graph_plotting():
     
     if st.session_state['gp_data_list']:
         st.info(f"データ数: {len(st.session_state['gp_data_list'])}")
-        if st.button("🗑️ 全データをクリア", key="btn_clear_all_v7"):
+        if st.button("🗑️ 全データをクリア", key="btn_clear_all_v10"):
             st.session_state['gp_data_list'] = []
             st.rerun()
     
     tab1, tab2 = st.tabs(["📂 ファイルから追加", "📋 エクセルから貼り付け"])
     
     with tab1:
-        files = st.file_uploader("CSV/Excelファイル", accept_multiple_files=True, key="gp_uploader_v7")
+        files = st.file_uploader("CSV/Excelファイル", accept_multiple_files=True, key="gp_uploader_v10")
         if files:
             new_data_added = False
             for f in files:
@@ -468,9 +467,9 @@ def page_graph_plotting():
 
     with tab2:
         st.caption("Excelからコピペして Ctrl+Enter")
-        paste_text = st.text_area("データ貼り付け", height=100, key="paste_area_v7")
-        paste_name = st.text_input("データ名", value=f"Data_{len(st.session_state['gp_data_list'])+1}", key="paste_name_v7")
-        if st.button("貼り付け追加", key="btn_paste_add_v7"):
+        paste_text = st.text_area("データ貼り付け", height=100, key="paste_area_v10")
+        paste_name = st.text_input("データ名", value=f"Data_{len(st.session_state['gp_data_list'])+1}", key="paste_name_v10")
+        if st.button("貼り付け追加", key="btn_paste_add_v10"):
             if paste_text:
                 try:
                     lines = [l.strip() for l in paste_text.splitlines() if l.strip()]
@@ -488,8 +487,8 @@ def page_graph_plotting():
                         st.rerun()
                 except Exception as e: st.error(f"エラー: {e}")
 
-    data_list = st.session_state['gp_data_list']
-    if not data_list: return
+    datasets = st.session_state['gp_data_list']
+    if not datasets: return
 
     # ==========================================
     # 2. グラフ設定
@@ -500,17 +499,15 @@ def page_graph_plotting():
     with col_settings:
         st.subheader("2. 詳細設定")
 
-        # ★★★ 修正点: 先にdatasets変数を定義して、後続の凡例計算でエラーにならないようにする ★★★
-        datasets = st.session_state['gp_data_list']
-
         # --- A. キャンバス ---
         with st.expander("📊 キャンバス・フォント", expanded=False):
             c1, c2 = st.columns(2)
-            fig_w = c1.number_input("幅 (inch)", 1.0, 50.0, 6.0, step=0.5, key="fw_in_v7")
-            fig_h = c2.number_input("高さ (inch)", 1.0, 50.0, 4.0, step=0.5, key="fh_in_v7")
-            dpi_val = st.number_input("解像度 (DPI)", 72, 600, 150, key="dpi_in_v7")
-            font_family = st.selectbox("フォント", ["Arial", "Times New Roman", "Helvetica", "Meiryo", "Yu Gothic"], index=0, key="ff_sel_v7")
-            base_fs = st.number_input("基本フォントサイズ", 6, 50, 12, key="bfs_in_v7")
+            fig_w = c1.number_input("幅 (inch)", 1.0, 50.0, 6.0, step=0.5, key="fw_in_v10")
+            fig_h = c2.number_input("高さ (inch)", 1.0, 50.0, 4.0, step=0.5, key="fh_in_v10")
+            dpi_val = st.number_input("解像度 (DPI)", 72, 600, 150, key="dpi_in_v10")
+            
+            font_family = st.selectbox("フォント", ["Times New Roman", "Arial", "Helvetica", "Meiryo", "Yu Gothic"], index=0, key="ff_sel_v10")
+            base_fs = st.number_input("基本フォントサイズ", 6, 50, 12, key="bfs_in_v10")
 
         # --- B. 軸設定 ---
         with st.expander("📐 軸 (Axes) と 単位変換", expanded=True):
@@ -521,109 +518,157 @@ def page_graph_plotting():
                 "x10^9 (n)": 1e9, "x10^12 (p)": 1e12, "x0.001 (k)": 0.001
             }
 
-            def axis_ui(key_prefix, label_def):
-                # テンプレート
+            def axis_ui(key_prefix, label_def, use_top=False, use_right=False):
                 col_btn = st.columns(3)
                 if col_btn[0].button("Voltage(V)", key=f"p_v_{key_prefix}"):
-                    st.session_state[f"{key_prefix}_lbl_v7"] = "Voltage (V)"
-                    st.session_state[f"{key_prefix}_scale_idx_v7"] = 0
+                    st.session_state[f"{key_prefix}_lbl_v10"] = "Voltage (V)"
+                    st.session_state[f"{key_prefix}_scale_idx_v10"] = 0
                 if col_btn[1].button("Current(mA)", key=f"p_ma_{key_prefix}"):
-                    st.session_state[f"{key_prefix}_lbl_v7"] = "Current (mA)"
-                    st.session_state[f"{key_prefix}_scale_idx_v7"] = 1
+                    st.session_state[f"{key_prefix}_lbl_v10"] = "Current (mA)"
+                    st.session_state[f"{key_prefix}_scale_idx_v10"] = 1
                 if col_btn[2].button("Current(µA)", key=f"p_ua_{key_prefix}"):
-                    st.session_state[f"{key_prefix}_lbl_v7"] = "Current (µA)"
-                    st.session_state[f"{key_prefix}_scale_idx_v7"] = 2
+                    st.session_state[f"{key_prefix}_lbl_v10"] = "Current (µA)"
+                    st.session_state[f"{key_prefix}_scale_idx_v10"] = 2
 
-                label = st.text_input("ラベル", label_def, key=f"{key_prefix}_lbl_v7")
+                label = st.text_input("ラベル", label_def, key=f"{key_prefix}_lbl_v10")
                 
-                # 倍率
-                idx_def = st.session_state.get(f"{key_prefix}_scale_idx_v7", 0)
-                scale_key = st.selectbox("表示倍率", list(SCALE_OPTIONS.keys()), index=idx_def, key=f"{key_prefix}_scale_sel_v7")
-                st.session_state[f"{key_prefix}_scale_idx_v7"] = list(SCALE_OPTIONS.keys()).index(scale_key)
+                curr_idx = st.session_state.get(f"{key_prefix}_scale_idx_v10", 0)
+                scale_key = st.selectbox("表示倍率", list(SCALE_OPTIONS.keys()), index=curr_idx, key=f"{key_prefix}_scale_sel_v10")
+                st.session_state[f"{key_prefix}_scale_idx_v10"] = list(SCALE_OPTIONS.keys()).index(scale_key)
                 
-                scale_val = SCALE_OPTIONS[scale_key]
+                current_scale_val = SCALE_OPTIONS[scale_key]
+                prev_scale_key = f"{key_prefix}_prev_scale_val"
+                prev_scale_val = st.session_state.get(prev_scale_key, 1.0)
                 
+                if current_scale_val != prev_scale_val:
+                    ratio = current_scale_val / prev_scale_val
+                    k_min = f"{key_prefix}_min_v10"
+                    k_max = f"{key_prefix}_max_v10"
+                    if st.session_state.get(k_min) is not None:
+                        st.session_state[k_min] = st.session_state[k_min] * ratio
+                    if st.session_state.get(k_max) is not None:
+                        st.session_state[k_max] = st.session_state[k_max] * ratio
+                    st.session_state[prev_scale_key] = current_scale_val
+
+                data_vals = []
+                for d in datasets:
+                    is_this_axis_x = (d.get('use_top', False) == use_top)
+                    is_this_axis_y = (d.get('use_right', False) == use_right)
+                    if key_prefix.startswith('x') and is_this_axis_x:
+                        data_vals.append(d['df'][d['x_col']] * current_scale_val)
+                    elif key_prefix.startswith('y') and is_this_axis_y:
+                        data_vals.append(d['df'][d['y_col']] * current_scale_val)
+                
+                calc_min, calc_max = None, None
+                if data_vals:
+                    concat_data = pd.concat(data_vals)
+                    if not concat_data.empty:
+                        calc_min = float(concat_data.min())
+                        calc_max = float(concat_data.max())
+                        margin = (calc_max - calc_min) * 0.05
+                        if margin == 0: margin = abs(calc_max) * 0.1 if calc_max!=0 else 1.0
+                        calc_min -= margin
+                        calc_max += margin
+
+                k_min = f"{key_prefix}_min_v10"
+                k_max = f"{key_prefix}_max_v10"
+                if st.session_state.get(k_min) is None and calc_min is not None:
+                    st.session_state[k_min] = calc_min
+                if st.session_state.get(k_max) is None and calc_max is not None:
+                    st.session_state[k_max] = calc_max
+
+                if prev_scale_key not in st.session_state:
+                     st.session_state[prev_scale_key] = current_scale_val
+
                 c1, c2 = st.columns(2)
-                d_min = c1.number_input("最小", value=None, format="%f", key=f"{key_prefix}_min_v7")
-                d_max = c2.number_input("最大", value=None, format="%f", key=f"{key_prefix}_max_v7")
+                d_min = c1.number_input("最小", value=None, format="%f", key=k_min)
+                d_max = c2.number_input("最大", value=None, format="%f", key=k_max)
                 c3, c4 = st.columns(2)
-                maj_int = c3.number_input("主目盛", 0.0, step=0.1, key=f"{key_prefix}_maj_v7")
-                min_int = c4.number_input("補助目盛", 0.0, step=0.1, key=f"{key_prefix}_min_int_v7")
-                is_log = st.checkbox("対数軸", False, key=f"{key_prefix}_log_v7")
-                
-                return {"label": label, "min": d_min, "max": d_max, "maj": maj_int, "log": is_log, "scale": scale_val}
+                maj_int = c3.number_input("主目盛", 0.0, step=0.1, key=f"{key_prefix}_maj_v10")
+                min_int = c4.number_input("補助目盛", 0.0, step=0.1, key=f"{key_prefix}_min_int_v10")
+                is_log = st.checkbox("対数軸", False, key=f"{key_prefix}_log_v10")
+                return {"label": label, "min": d_min, "max": d_max, "maj": maj_int, "log": is_log, "scale": current_scale_val}
 
-            with tabs_ax[0]: ax_settings['x1'] = axis_ui("x1", "Voltage (V)")
-            with tabs_ax[1]: ax_settings['x2'] = axis_ui("x2", "Secondary X")
-            with tabs_ax[2]: ax_settings['y1'] = axis_ui("y1", "Current (A)")
-            with tabs_ax[3]: ax_settings['y2'] = axis_ui("y2", "Power (W)")
+            with tabs_ax[0]: ax_settings['x1'] = axis_ui("x1", "Voltage (V)", use_top=False)
+            with tabs_ax[1]: ax_settings['x2'] = axis_ui("x2", "Secondary X", use_top=True)
+            with tabs_ax[2]: ax_settings['y1'] = axis_ui("y1", "Current (A)", use_right=False)
+            with tabs_ax[3]: ax_settings['y2'] = axis_ui("y2", "Power (W)", use_right=True)
             
             with tabs_ax[4]:
-                tick_dir = st.selectbox("目盛の向き", ["in", "out", "inout"], index=0, key="tdir_v7")
-                show_grid = st.checkbox("グリッド表示", True, key="sgrid_v7")
-                zero_cross = st.checkbox("原点線描画", True, key="zcross_v7")
+                tick_dir = st.selectbox("目盛の向き", ["in", "out", "inout"], index=0, key="tdir_v10")
+                show_grid = st.checkbox("グリッド表示", True, key="sgrid_v10")
+                zero_cross = st.checkbox("原点線描画", True, key="zcross_v10")
 
-        # --- C. 凡例設定 (編集 & 自動調整) ---
-        with st.expander("📝 凡例 (Legend)", expanded=False):
-            show_leg = st.checkbox("凡例を表示", True, key="sleg_v7")
+        # --- C. 凡例設定 (並び替え追加) ---
+        with st.expander("📝 凡例 (Legend)", expanded=True):
+            show_leg = st.checkbox("凡例を表示", True, key="sleg_v10")
+            
+            # --- 【追加】凡例設定エリアでの並び替え ---
+            st.markdown("#### 凡例順序の並び替え")
+            st.caption("ボタンを押すと表示順序（リストの上から順）が入れ替わります。")
+            for i, d in enumerate(datasets):
+                c_name, c_up, c_down = st.columns([4, 1, 1])
+                with c_name:
+                    st.text(f"{i+1}. {d.get('legend_name', d['name'])}")
+                with c_up:
+                    if st.button("⬆", key=f"leg_u_{i}"): move_data(i, "up"); st.rerun()
+                with c_down:
+                    if st.button("⬇", key=f"leg_d_{i}"): move_data(i, "down"); st.rerun()
+
             if show_leg:
+                st.markdown("---")
                 st.markdown("**スタイル設定**")
                 c_auto, c_size = st.columns(2)
-                auto_leg_size = c_auto.checkbox("サイズ自動調整", True, key="auto_leg_size_v7")
-                
-                # 自動調整の計算で count = len(datasets) を使うため、先に datasets が定義されている必要がある
-                manual_fs = c_size.number_input("フォントサイズ (手動)", 5, 40, int(base_fs), 
-                                                disabled=auto_leg_size, key="lfont_v7")
-                
+                auto_leg_size = c_auto.checkbox("サイズ自動調整", True, key="auto_leg_size_v10")
+                manual_fs = c_size.number_input("フォントサイズ", 5, 40, int(base_fs), disabled=auto_leg_size, key="lfont_v10")
                 if auto_leg_size:
-                    count = len(datasets)
-                    l_fontsize = max(6, int(base_fs) - (count // 3))
+                    l_fontsize = max(6, int(base_fs) - (len(datasets) // 3))
                 else:
                     l_fontsize = manual_fs
 
                 c1, c2 = st.columns(2)
-                l_loc = c1.selectbox("位置", ["best", "upper right", "upper left", "lower right", "lower left", "outside right"], index=0, key="lloc_v7")
-                l_col = c2.number_input("列数", 1, 5, 1, key="lcol_v7")
-                l_frame = st.checkbox("枠線を表示", False, key="lframe_v7")
+                l_loc = c1.selectbox("位置", ["best", "upper right", "upper left", "lower right", "lower left", "outside right"], index=0, key="lloc_v10")
+                l_col = c2.number_input("列数", 1, 5, 1, key="lcol_v10")
+                l_frame = st.checkbox("枠線を表示", False, key="lframe_v10")
 
-        # --- D. データ系列 (名前編集追加) ---
+        # --- D. データ系列 ---
         st.markdown("#### データ系列設定")
-        # datasets 変数は上で定義済み
         
         for i, d in enumerate(datasets):
             with st.expander(f"#{i+1}: {d.get('legend_name', d['name'])}", expanded=False):
-                d['legend_name'] = st.text_input("凡例表示名", value=d.get('legend_name', d['name']), key=f"leg_nm_{i}_v7")
+                d['legend_name'] = st.text_input("凡例表示名", value=d.get('legend_name', d['name']), key=f"leg_nm_{i}_v10")
 
+                # ここでも並び替え可能
                 bc1, bc2, bc3 = st.columns([1, 1, 2])
                 with bc1:
-                    if st.button("⬆", key=f"btn_u_{i}_v7"): move_data(i, "up"); st.rerun()
+                    if st.button("⬆", key=f"btn_u_{i}_v10"): move_data(i, "up"); st.rerun()
                 with bc2:
-                    if st.button("⬇", key=f"btn_d_{i}_v7"): move_data(i, "down"); st.rerun()
+                    if st.button("⬇", key=f"btn_d_{i}_v10"): move_data(i, "down"); st.rerun()
                 with bc3:
-                    if st.button("❌ 削除", key=f"btn_del_{i}_v7"): datasets.pop(i); st.rerun()
+                    if st.button("❌ 削除", key=f"btn_del_{i}_v10"): datasets.pop(i); st.rerun()
 
                 cols = d['df'].columns.tolist()
                 sc1, sc2 = st.columns(2)
-                xc = sc1.selectbox(f"X列", cols, index=0, key=f"xc_{i}_v7")
-                yc = sc2.selectbox(f"Y列", cols, index=1 if len(cols)>1 else 0, key=f"yc_{i}_v7")
+                xc = sc1.selectbox(f"X列", cols, index=0, key=f"xc_{i}_v10")
+                yc = sc2.selectbox(f"Y列", cols, index=1 if len(cols)>1 else 0, key=f"yc_{i}_v10")
                 
                 ac1, ac2 = st.columns(2)
-                d['use_top'] = ac1.checkbox("上X軸", d.get('use_top', False), key=f"ut_{i}_v7")
-                d['use_right'] = ac2.checkbox("右Y軸", d.get('use_right', False), key=f"ur_{i}_v7")
+                d['use_top'] = ac1.checkbox("上X軸", d.get('use_top', False), key=f"ut_{i}_v10")
+                d['use_right'] = ac2.checkbox("右Y軸", d.get('use_right', False), key=f"ur_{i}_v10")
 
                 tc1, tc2 = st.columns(2)
-                d['color'] = tc1.color_picker("色", d.get('color', '#0000FF'), key=f"clr_{i}_v7")
-                d['marker'] = tc2.selectbox("マーカー", ["None", "o", "s", "^", "x"], index=0 if d.get('marker')=="None" else 1, key=f"mrk_{i}_v7")
+                d['color'] = tc1.color_picker("色", d.get('color', '#0000FF'), key=f"clr_{i}_v10")
+                d['marker'] = tc2.selectbox("マーカー", ["None", "o", "s", "^", "x"], index=0 if d.get('marker')=="None" else 1, key=f"mrk_{i}_v10")
                 lw1, lw2 = st.columns(2)
-                d['line_width'] = lw1.number_input("線幅", 0.0, 10.0, float(d.get('line_width', 1.5)), key=f"lw_{i}_v7")
-                d['marker_size'] = lw2.number_input("点サイズ", 0.0, 20.0, float(d.get('marker_size', 6.0)), key=f"ms_{i}_v7")
-                d['linestyle'] = st.selectbox("線種", ["-", "--", "-.", ":", "None"], index=0, key=f"lst_{i}_v7")
+                d['line_width'] = lw1.number_input("線幅", 0.0, 10.0, float(d.get('line_width', 1.5)), key=f"lw_{i}_v10")
+                d['marker_size'] = lw2.number_input("点サイズ", 0.0, 20.0, float(d.get('marker_size', 6.0)), key=f"ms_{i}_v10")
+                d['linestyle'] = st.selectbox("線種", ["-", "--", "-.", ":", "None"], index=0, key=f"lst_{i}_v10")
 
                 st.markdown("---")
-                d['mppt'] = st.checkbox("MPPT解析", d.get('mppt', False), key=f"mppt_{i}_v7")
-                d['fit_mode'] = st.selectbox("近似曲線", ["なし", "線形", "多項式(2次)", "移動平均"], index=0, key=f"fit_{i}_v7")
+                d['mppt'] = st.checkbox("MPPT解析", d.get('mppt', False), key=f"mppt_{i}_v10")
+                d['fit_mode'] = st.selectbox("近似曲線", ["なし", "線形", "多項式(2次)", "移動平均"], index=0, key=f"fit_{i}_v10")
                 if d['fit_mode'] != "なし":
-                    d['show_eq'] = st.checkbox("数式を表示", d.get('show_eq', False), key=f"seq_{i}_v7")
+                    d['show_eq'] = st.checkbox("数式を表示", d.get('show_eq', False), key=f"seq_{i}_v10")
 
                 d.update({'x_col': xc, 'y_col': yc})
 
@@ -633,12 +678,14 @@ def page_graph_plotting():
     with col_preview:
         st.subheader("プレビュー")
         
-        plt.rcParams['font.size'] = base_fs
-        if font_family in ["Times New Roman", "Arial", "Helvetica"]:
-            plt.rcParams['font.family'] = 'sans-serif'
-            plt.rcParams['font.sans-serif'] = [font_family]
+        # フォント設定
+        if font_family in ["Times New Roman", "Times"]:
+            plt.rcParams['font.family'] = 'serif'
+            plt.rcParams['font.serif'] = [font_family] + plt.rcParams['font.serif']
         else:
-            plt.rcParams['font.family'] = font_family
+            plt.rcParams['font.family'] = 'sans-serif'
+            plt.rcParams['font.sans-serif'] = [font_family] + plt.rcParams['font.sans-serif']
+        plt.rcParams['font.size'] = base_fs
 
         fig, ax1 = plt.subplots(figsize=(fig_w, fig_h), dpi=dpi_val)
         
@@ -646,7 +693,7 @@ def page_graph_plotting():
         has_top = any(d.get('use_top') for d in datasets)
 
         ax2, ax3 = None, None
-        axes_map = {(False, False): ax1}
+        axes_map = {(False, False): ax1} # (Top?, Right?) -> ax
 
         if has_right:
             ax2 = ax1.twinx()
@@ -655,7 +702,7 @@ def page_graph_plotting():
             ax3 = ax1.twiny()
             axes_map[(True, False)] = ax3
         if has_right and has_top:
-            axes_map[(True, True)] = ax3
+            axes_map[(True, True)] = ax3 # 簡易対応
 
         def apply_axis_conf(ax, xc, yc):
             if not ax: return
@@ -679,6 +726,10 @@ def page_graph_plotting():
         if zero_cross: 
             ax1.axhline(0, color='black', linewidth=0.8)
             ax1.axvline(0, color='black', linewidth=0.8)
+
+        # 凡例収集用リスト（順番通りに追加する）
+        legend_handles = []
+        legend_labels = []
 
         for d in datasets:
             df = d['df']
@@ -706,19 +757,25 @@ def page_graph_plotting():
             
             label_text = d.get('legend_name', d['name'])
 
-            target_ax.plot(x_plot, y_plot, label=label_text, 
-                           color=d['color'], marker=mk, linestyle=ls,
-                           linewidth=d.get('line_width', 1.5), markersize=d.get('marker_size', 6))
+            # プロット実行
+            lines = target_ax.plot(x_plot, y_plot, label=label_text, 
+                                   color=d['color'], marker=mk, linestyle=ls,
+                                   linewidth=d.get('line_width', 1.5), markersize=d.get('marker_size', 6))
+            
+            # 凡例用に保存（これで順番が保証される）
+            if lines:
+                legend_handles.append(lines[0])
+                legend_labels.append(label_text)
 
             # 近似曲線
             fmode = d.get('fit_mode', "なし")
             if fmode != "なし" and len(x_plot) > 1:
-                idx_sorted = np.argsort(x_plot)
-                xs = x_plot.iloc[idx_sorted]
-                ys = y_plot.iloc[idx_sorted]
-                y_fit = None
-                eq_text = ""
                 try:
+                    idx_sorted = np.argsort(x_plot)
+                    xs = x_plot.iloc[idx_sorted]
+                    ys = y_plot.iloc[idx_sorted]
+                    y_fit = None
+                    eq_text = ""
                     if "線形" in fmode:
                         slope, intercept, r_val, _, _ = stats.linregress(xs, ys)
                         y_fit = slope * xs + intercept
@@ -755,23 +812,16 @@ def page_graph_plotting():
                                        textcoords='offset points', arrowprops=dict(arrowstyle="->"),
                                        bbox=dict(boxstyle="round", fc="white", alpha=0.7))
 
+        # 凡例表示（収集したハンドルを使用）
         if show_leg:
-            lines = []
-            labels = []
-            for ax in [ax1, ax2, ax3]:
-                if ax is not None:
-                    l, lb = ax.get_legend_handles_labels()
-                    lines.extend(l)
-                    labels.extend(lb)
-            by_label = dict(zip(labels, lines))
-            
             bbox = None
             loc_param = l_loc
             if l_loc == "outside right":
                 loc_param = "center left"
                 bbox = (1.05, 0.5)
             
-            ax1.legend(by_label.values(), by_label.keys(), 
+            # リスト順序通りの凡例を作成
+            ax1.legend(legend_handles, legend_labels, 
                        loc=loc_param, bbox_to_anchor=bbox, ncol=l_col,
                        fontsize=l_fontsize, frameon=l_frame, edgecolor='black')
 
@@ -780,7 +830,7 @@ def page_graph_plotting():
         
         buf = BytesIO()
         fig.savefig(buf, format="png", dpi=300, bbox_inches='tight')
-        st.download_button("画像を保存 (PNG)", buf.getvalue(), "plot.png", "image/png", key="dl_png_v7")
+        st.download_button("画像を保存 (PNG)", buf.getvalue(), "plot.png", "image/png", key="dl_png_v10")
 # ---------------------------
 # --- Components ---
 # ---------------------------
@@ -1241,6 +1291,7 @@ if __name__ == "__main__":
     except Exception:
         pass
     main()
+
 
 
 
