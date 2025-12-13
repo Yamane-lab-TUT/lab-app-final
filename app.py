@@ -772,9 +772,6 @@ def page_graph_plotting():
         fig.savefig(buf, format="png", dpi=300, bbox_inches='tight')
         st.download_button("画像を保存 (PNG)", buf.getvalue(), "my_graph.png", "image/png")
 
-# 実行用
-if __name__ == "__main__":
-    page_graph_plotting()
 # ---------------------------
 # --- Components ---
 # ---------------------------
@@ -1235,6 +1232,7 @@ if __name__ == "__main__":
     except Exception:
         pass
     main()
+
 
 
 
