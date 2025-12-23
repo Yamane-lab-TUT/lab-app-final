@@ -598,8 +598,8 @@ def page_graph_plotting():
         # --- A. キャンバス (cm指定) ---
         with st.expander("📊 キャンバス・フォント", expanded=False):
             c1, c2 = st.columns(2)
-            fig_w_cm = c1.number_input("幅 (cm)", 2.0, 100.0, 15.0, step=0.5, key="fw_cm_v20")
-            fig_h_cm = c2.number_input("高さ (cm)", 2.0, 100.0, 10.0, step=0.5, key="fh_cm_v20")
+            fig_w_cm = c1.number_input("幅 (cm)", 2.0, 100.0, 10.0, step=0.5, key="fw_cm_v20")
+            fig_h_cm = c2.number_input("高さ (cm)", 2.0, 100.0, 8.0, step=0.5, key="fh_cm_v20")
             
             fig_w_inch = fig_w_cm / 2.54
             fig_h_inch = fig_h_cm / 2.54
@@ -1461,6 +1461,7 @@ if __name__ == "__main__":
     except Exception:
         pass
     main()
+
 
 
 
