@@ -484,7 +484,7 @@ def page_graph_plotting():
     
     with tab1:
         st.markdown("**読み込みオプション**")
-        expand_cols = st.checkbox("列ごとに別の系列として追加する", value=False, key="expand_cols_v21")
+        expand_cols = st.checkbox("列ごとに別の系列として追加する（データ追加前に押してください）", value=False, key="expand_cols_v21")
         
         current_uploader_key = f"gp_uploader_v21_{st.session_state['uploader_key_id']}"
         files = st.file_uploader("CSV/Excelファイル", accept_multiple_files=True, key=current_uploader_key)
@@ -1475,6 +1475,7 @@ if __name__ == "__main__":
     except Exception:
         pass
     main()
+
 
 
 
