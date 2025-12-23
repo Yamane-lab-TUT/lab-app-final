@@ -325,13 +325,13 @@ from datetime import datetime
 from io import BytesIO
 
 # ==========================================
-# 関数定義: page_graph_plotting (v25: 凡例名シンプル化版)
+# 関数定義: page_graph_plotting (v27: データ編集機能追加版)
 # ==========================================
 def page_graph_plotting():
     st.header("📈 統合型グラフ解析ツール")
     st.markdown("""
-    **v25 更新**: 
-    - **凡例名のシンプル化**: 列分割モード時、ファイル名を付与せず「ヘッダー（列名）」のみを凡例名にします。
+    **v27 更新**: 
+    - **データ編集機能**: データ系列設定の中で、数値を直接書き換えたり行を追加・削除できるようになりました。
     """)
 
     # --- CSS ---
@@ -396,9 +396,9 @@ def page_graph_plotting():
         c_load, c_save = st.columns(2)
         with c_load:
             st.markdown("#### 📂 復元")
-            uploaded_project = st.file_uploader("プロジェクトファイル (.json)", type=["json"], key="project_loader_v25")
+            uploaded_project = st.file_uploader("プロジェクトファイル (.json)", type=["json"], key="project_loader_v27")
             if uploaded_project:
-                if st.button("設定を読み込む", key="btn_load_proj_v25"):
+                if st.button("設定を読み込む", key="btn_load_proj_v27"):
                     try:
                         project_data = json.load(uploaded_project)
                         restored_data_list = []
@@ -433,9 +433,9 @@ def page_graph_plotting():
         with c_save:
             st.markdown("#### 💾 保存")
             default_proj_name = f"GraphProject_{datetime.now().strftime('%Y%m%d_%H%M')}"
-            save_name_proj = st.text_input("プロジェクト名 (拡張子不要)", value=default_proj_name, key="proj_save_name_v25")
+            save_name_proj = st.text_input("プロジェクト名 (拡張子不要)", value=default_proj_name, key="proj_save_name_v27")
             
-            if st.button("プロジェクトファイルを作成", key="btn_save_proj_v25"):
+            if st.button("プロジェクトファイルを作成", key="btn_save_proj_v27"):
                 if not st.session_state['gp_data_list']:
                     st.warning("データなし")
                 else:
@@ -450,7 +450,7 @@ def page_graph_plotting():
                     
                     settings_snapshot = {}
                     for key, val in st.session_state.items():
-                        if key.startswith(("project_", "gp_", "btn_", "paste_", "fw_", "fh_", "dpi_", "ff_", "bfs_", "sleg", "lfont", "ax_preset", "legend_", "scale_sel", "vis_", "leg_nm_", "xc_", "yc_", "ut_", "ur_", "clr_", "mrk_", "lw_", "ms_", "lst_", "mppt_", "fit_", "seq_", "area_", "dens_", "mx_", "my_", "fill_", "xy_swap_", "proj_save_name", "img_save_name")): continue
+                        if key.startswith(("project_", "gp_", "btn_", "paste_", "fw_", "fh_", "dpi_", "ff_", "bfs_", "sleg", "lfont", "ax_preset", "legend_", "scale_sel", "vis_", "leg_nm_", "xc_", "yc_", "ut_", "ur_", "clr_", "mrk_", "lw_", "ms_", "lst_", "mppt_", "fit_", "seq_", "area_", "dens_", "mx_", "my_", "fill_", "xy_swap_", "proj_save_name", "img_save_name", "editor_")): continue
                         if isinstance(val, (int, float, str, bool, list, dict, type(None))):
                             settings_snapshot[key] = val
 
@@ -465,7 +465,7 @@ def page_graph_plotting():
                     if not final_proj_fname: final_proj_fname = default_proj_name
                     if not final_proj_fname.endswith(".json"): final_proj_fname += ".json"
                     
-                    st.download_button("⬇️ JSONをダウンロード", json_str, final_proj_fname, "application/json", key="dl_json_btn_v25")
+                    st.download_button("⬇️ JSONをダウンロード", json_str, final_proj_fname, "application/json", key="dl_json_btn_v27")
 
     # ==========================================
     # 1. データ入力
@@ -474,7 +474,7 @@ def page_graph_plotting():
     
     if st.session_state['gp_data_list']:
         st.info(f"データ数: {len(st.session_state['gp_data_list'])}")
-        if st.button("🗑️ 全データをクリア", key="btn_clear_all_v25"):
+        if st.button("🗑️ 全データをクリア", key="btn_clear_all_v27"):
             st.session_state['gp_data_list'] = []
             st.session_state['uploader_key_id'] += 1
             st.rerun()
@@ -483,9 +483,9 @@ def page_graph_plotting():
     
     with tab1:
         st.markdown("**読み込みオプション**")
-        expand_cols = st.checkbox("列ごとに別の系列として追加する（データ入力前に押してください）", value=False, key="expand_cols_v25")
+        expand_cols = st.checkbox("列ごとに別の系列として追加する", value=False, key="expand_cols_v27")
         
-        current_uploader_key = f"gp_uploader_v25_{st.session_state['uploader_key_id']}"
+        current_uploader_key = f"gp_uploader_v27_{st.session_state['uploader_key_id']}"
         files = st.file_uploader("CSV/Excelファイル", accept_multiple_files=True, key=current_uploader_key)
         
         if files:
@@ -513,7 +513,7 @@ def page_graph_plotting():
                                 "id": str(uuid.uuid4()),
                                 "name": f.name, 
                                 "df": df,
-                                "legend_name": y_c, # 🛠️ 変更点: ファイル名を入れず列名のみ
+                                "legend_name": y_c, 
                                 "mppt": False, "show_eq": False, "visible": True,
                                 "color": auto_color, "marker": "None", "linestyle": "-",
                                 "x_col": x_c, "y_col": y_c,
@@ -539,13 +539,13 @@ def page_graph_plotting():
 
     with tab2:
         st.markdown("**貼り付けオプション**")
-        expand_paste = st.checkbox("列ごとに別の系列として追加する（データ入力前に押してください）", value=False, key="expand_paste_v25")
+        expand_paste = st.checkbox("列ごとに別の系列として追加する", value=False, key="expand_paste_v27")
 
         st.caption("Excelからコピペ (タブ区切り) して Ctrl+Enter")
-        paste_text = st.text_area("データ貼り付けエリア", height=100, key="paste_area_v25")
-        paste_name = st.text_input("データセット名", value=f"Data_{len(st.session_state['gp_data_list'])+1}", key="paste_name_v25")
+        paste_text = st.text_area("データ貼り付けエリア", height=100, key="paste_area_v27")
+        paste_name = st.text_input("データセット名", value=f"Data_{len(st.session_state['gp_data_list'])+1}", key="paste_name_v27")
         
-        if st.button("貼り付け追加", key="btn_paste_add_v25"):
+        if st.button("貼り付け追加", key="btn_paste_add_v27"):
             if paste_text:
                 try:
                     df_paste = pd.read_csv(io.StringIO(paste_text), sep='\t')
@@ -561,7 +561,7 @@ def page_graph_plotting():
                                     "id": str(uuid.uuid4()),
                                     "name": paste_name, 
                                     "df": df_paste,
-                                    "legend_name": y_c, # 🛠️ 変更点: 列名のみ
+                                    "legend_name": y_c, 
                                     "mppt": False, "show_eq": False, "visible": True,
                                     "color": auto_color, "marker": "None", "linestyle": "-",
                                     "x_col": x_c, "y_col": y_c,
@@ -603,17 +603,17 @@ def page_graph_plotting():
         # --- A. キャンバス (cm指定) ---
         with st.expander("📊 キャンバス・フォント", expanded=False):
             c1, c2 = st.columns(2)
-            fig_w_cm = c1.number_input("幅 (cm)", 2.0, 100.0, 15.0, step=0.5, key="fw_cm_v25")
-            fig_h_cm = c2.number_input("高さ (cm)", 2.0, 100.0, 10.0, step=0.5, key="fh_cm_v25")
+            fig_w_cm = c1.number_input("幅 (cm)", 2.0, 100.0, 15.0, step=0.5, key="fw_cm_v27")
+            fig_h_cm = c2.number_input("高さ (cm)", 2.0, 100.0, 10.0, step=0.5, key="fh_cm_v27")
             
             fig_w_inch = fig_w_cm / 2.54
             fig_h_inch = fig_h_cm / 2.54
             
-            dpi_val = st.number_input("解像度 (DPI)", 72, 600, 150, key="dpi_in_v25")
+            dpi_val = st.number_input("解像度 (DPI)", 72, 600, 150, key="dpi_in_v27")
             
             font_options = ["🇯🇵 日本語標準 (Auto)", "Times New Roman", "Arial", "Helvetica", "Meiryo", "Yu Gothic"]
-            font_family = st.selectbox("フォント", font_options, index=0, key="ff_sel_v25")
-            base_fs = st.number_input("基本フォントサイズ", 6, 50, 12, key="bfs_in_v25")
+            font_family = st.selectbox("フォント", font_options, index=0, key="ff_sel_v27")
+            base_fs = st.number_input("基本フォントサイズ", 6, 50, 12, key="bfs_in_v27")
 
         # --- B. 軸設定 ---
         with st.expander("📐 軸 (Axes) と 単位変換", expanded=True):
@@ -627,20 +627,20 @@ def page_graph_plotting():
             def axis_ui(key_prefix, label_def, use_top=False, use_right=False):
                 col_btn = st.columns(3)
                 if col_btn[0].button("Voltage(V)", key=f"p_v_{key_prefix}"):
-                    st.session_state[f"{key_prefix}_lbl_v25"] = "Voltage (V)"
-                    st.session_state[f"{key_prefix}_scale_idx_v25"] = 0
+                    st.session_state[f"{key_prefix}_lbl_v27"] = "Voltage (V)"
+                    st.session_state[f"{key_prefix}_scale_idx_v27"] = 0
                 if col_btn[1].button("Current(mA)", key=f"p_ma_{key_prefix}"):
-                    st.session_state[f"{key_prefix}_lbl_v25"] = "Current (mA)"
-                    st.session_state[f"{key_prefix}_scale_idx_v25"] = 1
+                    st.session_state[f"{key_prefix}_lbl_v27"] = "Current (mA)"
+                    st.session_state[f"{key_prefix}_scale_idx_v27"] = 1
                 if col_btn[2].button("Current(µA)", key=f"p_ua_{key_prefix}"):
-                    st.session_state[f"{key_prefix}_lbl_v25"] = "Current (µA)"
-                    st.session_state[f"{key_prefix}_scale_idx_v25"] = 2
+                    st.session_state[f"{key_prefix}_lbl_v27"] = "Current (µA)"
+                    st.session_state[f"{key_prefix}_scale_idx_v27"] = 2
 
-                label = st.text_input("ラベル (日本語可)", label_def, key=f"{key_prefix}_lbl_v25")
+                label = st.text_input("ラベル (日本語可)", label_def, key=f"{key_prefix}_lbl_v27")
                 
-                curr_idx = st.session_state.get(f"{key_prefix}_scale_idx_v25", 0)
-                scale_key = st.selectbox("表示倍率", list(SCALE_OPTIONS.keys()), index=curr_idx, key=f"{key_prefix}_scale_sel_v25")
-                st.session_state[f"{key_prefix}_scale_idx_v25"] = list(SCALE_OPTIONS.keys()).index(scale_key)
+                curr_idx = st.session_state.get(f"{key_prefix}_scale_idx_v27", 0)
+                scale_key = st.selectbox("表示倍率", list(SCALE_OPTIONS.keys()), index=curr_idx, key=f"{key_prefix}_scale_sel_v27")
+                st.session_state[f"{key_prefix}_scale_idx_v27"] = list(SCALE_OPTIONS.keys()).index(scale_key)
                 
                 current_scale_val = SCALE_OPTIONS[scale_key]
                 prev_scale_key = f"{key_prefix}_prev_scale_val"
@@ -648,8 +648,8 @@ def page_graph_plotting():
                 
                 if current_scale_val != prev_scale_val:
                     ratio = current_scale_val / prev_scale_val
-                    k_min = f"{key_prefix}_min_v25"
-                    k_max = f"{key_prefix}_max_v25"
+                    k_min = f"{key_prefix}_min_v27"
+                    k_max = f"{key_prefix}_max_v27"
                     if st.session_state.get(k_min) is not None:
                         st.session_state[k_min] = st.session_state[k_min] * ratio
                     if st.session_state.get(k_max) is not None:
@@ -687,8 +687,8 @@ def page_graph_plotting():
                         calc_min -= margin
                         calc_max += margin
 
-                k_min = f"{key_prefix}_min_v25"
-                k_max = f"{key_prefix}_max_v25"
+                k_min = f"{key_prefix}_min_v27"
+                k_max = f"{key_prefix}_max_v27"
                 if st.session_state.get(k_min) is None and calc_min is not None:
                     st.session_state[k_min] = calc_min
                 if st.session_state.get(k_max) is None and calc_max is not None:
@@ -701,12 +701,12 @@ def page_graph_plotting():
                 d_min = c1.number_input("最小", value=None, format="%f", key=k_min)
                 d_max = c2.number_input("最大", value=None, format="%f", key=k_max)
                 c3, c4 = st.columns(2)
-                maj_int = c3.number_input("主目盛", 0.0, step=0.1, key=f"{key_prefix}_maj_v25")
-                min_int = c4.number_input("補助目盛", 0.0, step=0.1, key=f"{key_prefix}_min_int_v25")
+                maj_int = c3.number_input("主目盛", 0.0, step=0.1, key=f"{key_prefix}_maj_v27")
+                min_int = c4.number_input("補助目盛", 0.0, step=0.1, key=f"{key_prefix}_min_int_v27")
                 
                 c5, c6 = st.columns(2)
-                is_log = c5.checkbox("対数軸", False, key=f"{key_prefix}_log_v25")
-                is_inv = c6.checkbox("軸を反転", False, key=f"{key_prefix}_inv_v25")
+                is_log = c5.checkbox("対数軸", False, key=f"{key_prefix}_log_v27")
+                is_inv = c6.checkbox("軸を反転", False, key=f"{key_prefix}_inv_v27")
 
                 return {"label": label, "min": d_min, "max": d_max, "maj": maj_int, "log": is_log, "inv": is_inv, "scale": current_scale_val}
 
@@ -716,13 +716,13 @@ def page_graph_plotting():
             with tabs_ax[3]: ax_settings['y2'] = axis_ui("y2", "Power (W)", use_right=True)
             
             with tabs_ax[4]:
-                tick_dir = st.selectbox("目盛の向き", ["in", "out", "inout"], index=0, key="tdir_v25")
-                show_grid = st.checkbox("グリッド表示", False, key="sgrid_v25")
-                zero_cross = st.checkbox("原点線描画", True, key="zcross_v25")
+                tick_dir = st.selectbox("目盛の向き", ["in", "out", "inout"], index=0, key="tdir_v27")
+                show_grid = st.checkbox("グリッド表示", False, key="sgrid_v27")
+                zero_cross = st.checkbox("原点線描画", True, key="zcross_v27")
 
         # --- C. 凡例設定 ---
         with st.expander("📝 凡例 (Legend)", expanded=True):
-            show_leg = st.checkbox("凡例を表示", True, key="sleg_v25")
+            show_leg = st.checkbox("凡例を表示", True, key="sleg_v27")
             
             st.markdown("#### 凡例順序・表示設定")
             for i, d in enumerate(datasets):
@@ -741,17 +741,17 @@ def page_graph_plotting():
                 st.markdown("---")
                 st.markdown("**スタイル設定**")
                 c_auto, c_size = st.columns(2)
-                auto_leg_size = c_auto.checkbox("サイズ自動調整", True, key="auto_leg_size_v25")
-                manual_fs = c_size.number_input("フォントサイズ", 5, 40, int(base_fs), disabled=auto_leg_size, key="lfont_v25")
+                auto_leg_size = c_auto.checkbox("サイズ自動調整", True, key="auto_leg_size_v27")
+                manual_fs = c_size.number_input("フォントサイズ", 5, 40, int(base_fs), disabled=auto_leg_size, key="lfont_v27")
                 if auto_leg_size:
                     l_fontsize = max(6, int(base_fs) - (len(datasets) // 3))
                 else:
                     l_fontsize = manual_fs
 
                 c1, c2 = st.columns(2)
-                l_loc = c1.selectbox("位置", ["best", "upper right", "upper left", "lower right", "lower left", "outside right"], index=0, key="lloc_v25")
-                l_col = c2.number_input("列数", 1, 5, 1, key="lcol_v25")
-                l_frame = st.checkbox("枠線を表示", False, key="lframe_v25")
+                l_loc = c1.selectbox("位置", ["best", "upper right", "upper left", "lower right", "lower left", "outside right"], index=0, key="lloc_v27")
+                l_col = c2.number_input("列数", 1, 5, 1, key="lcol_v27")
+                l_frame = st.checkbox("枠線を表示", False, key="lframe_v27")
 
         # --- D. データ系列 ---
         st.markdown("#### データ系列設定")
@@ -771,6 +771,18 @@ def page_graph_plotting():
                 with bc4:
                     if st.button("❌ 削除", key=f"btn_del_{did}"): datasets.pop(i); st.rerun()
 
+                # --- データ編集機能 (New!) ---
+                with st.expander("🔢 生データを編集 (Excelライク)", expanded=False):
+                    st.caption("値をダブルクリックで編集。行選択してDelで削除。一番下の行に追加可能。")
+                    # データエディタを表示し、編集結果をd['df']に即座に反映
+                    d['df'] = st.data_editor(
+                        d['df'],
+                        key=f"editor_{did}",
+                        num_rows="dynamic",
+                        use_container_width=True,
+                        height=200
+                    )
+
                 cols = d['df'].columns.tolist()
                 sc1, sc2, sc3 = st.columns([2, 2, 1])
                 curr_xc = d.get('x_col')
@@ -780,8 +792,11 @@ def page_graph_plotting():
 
                 xc = sc1.selectbox(f"X列", cols, index=ix_x, key=f"xc_{did}")
                 yc = sc2.selectbox(f"Y列", cols, index=ix_y, key=f"yc_{did}")
+                
                 if sc3.button("🔄 入替", key=f"xy_swap_{did}"):
                     d['x_col'], d['y_col'] = yc, xc
+                    st.session_state[f"xc_{did}"] = yc
+                    st.session_state[f"yc_{did}"] = xc
                     st.rerun()
 
                 st.caption("電流密度計算")
@@ -823,7 +838,7 @@ def page_graph_plotting():
     with col_preview:
         st.subheader("プレビュー")
         
-        # --- フォント & 日本語対応設定 (v25) ---
+        # --- フォント & 日本語対応設定 (v27) ---
         plt.rcParams.update(plt.rcParamsDefault)
         
         if "日本語" in font_family:
@@ -1016,13 +1031,13 @@ def page_graph_plotting():
             fig.savefig(buf, format="png", dpi=300)
         
         default_img_name = f"plot_{datetime.now().strftime('%Y%m%d_%H%M')}"
-        save_name_img = st.text_input("画像保存名 (拡張子不要)", value=default_img_name, key="img_save_name_v25")
+        save_name_img = st.text_input("画像保存名 (拡張子不要)", value=default_img_name, key="img_save_name_v27")
         
         final_img_fname = save_name_img.strip()
         if not final_img_fname: final_img_fname = default_img_name
         if not final_img_fname.endswith(".png"): final_img_fname += ".png"
 
-        st.download_button("画像を保存 (PNG)", buf.getvalue(), final_img_fname, "image/png", key="dl_png_v25")
+        st.download_button("画像を保存 (PNG)", buf.getvalue(), final_img_fname, "image/png", key="dl_png_v27")
 # ---------------------------
 # --- Components ---
 # ---------------------------
@@ -1483,6 +1498,7 @@ if __name__ == "__main__":
     except Exception:
         pass
     main()
+
 
 
 
