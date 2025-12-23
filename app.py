@@ -492,7 +492,11 @@ def page_graph_plotting():
         if files:
             new_data_added = False
             for f in files:
-                if not expand_cols and any(d['name'] == f.name for d in st.session_state['gp_data_list']): continue
+                # 🛠️ 修正ポイント: 
+                # 「列ごと」設定がONでもOFFでも、既に同じ名前のファイルがリストにあれば
+                # 絶対に追加しないようにガードします。これで無限増殖を防ぎます。
+                if any(d['name'] == f.name for d in st.session_state['gp_data_list']):
+                    continue
                 
                 df = None
                 try:
@@ -501,18 +505,22 @@ def page_graph_plotting():
                 except: pass
                 
                 if df is not None:
+                    # 数値列のみ抽出 & カラム名クリーニング
                     df = df.select_dtypes(include=[np.number])
                     df.columns = [str(c).strip() for c in df.columns]
                     cols = df.columns.tolist()
                     if not cols: continue
 
+                    # --- 分割モード (expand_cols = True) ---
                     if expand_cols and len(cols) >= 2:
                         x_c = cols[0]
+                        # 2列目以降をそれぞれ別のデータセットとして登録
                         for y_c in cols[1:]:
                             auto_color = get_next_color(len(st.session_state['gp_data_list']))
                             st.session_state['gp_data_list'].append({
                                 "id": str(uuid.uuid4()),
-                                "name": f.name, "df": df,
+                                "name": f.name, # ファイル名を識別子として保持
+                                "df": df,
                                 "legend_name": f"{f.name} ({y_c})",
                                 "mppt": False, "show_eq": False, "visible": True,
                                 "color": auto_color, "marker": "None", "linestyle": "-",
@@ -521,11 +529,14 @@ def page_graph_plotting():
                                 "mppt_x": 10, "mppt_y": -30, "fill_area": False
                             })
                         new_data_added = True
+                    
+                    # --- 通常モード (1ファイル1データセット) ---
                     else:
                         auto_color = get_next_color(len(st.session_state['gp_data_list']))
                         st.session_state['gp_data_list'].append({
                             "id": str(uuid.uuid4()),
-                            "name": f.name, "df": df,
+                            "name": f.name,
+                            "df": df,
                             "legend_name": f.name,
                             "mppt": False, "show_eq": False, "visible": True,
                             "color": auto_color, "marker": "None", "linestyle": "-",
@@ -535,7 +546,10 @@ def page_graph_plotting():
                             "mppt_x": 10, "mppt_y": -30, "fill_area": False
                         })
                         new_data_added = True
-            if new_data_added: st.rerun()
+            
+            # データが増えた場合のみリロード（無限ループ防止）
+            if new_data_added:
+                st.rerun()
 
     with tab2:
         st.caption("Excelからコピペ (タブ区切り) して Ctrl+Enter")
@@ -1461,6 +1475,7 @@ if __name__ == "__main__":
     except Exception:
         pass
     main()
+
 
 
 
