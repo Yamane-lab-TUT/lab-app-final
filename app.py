@@ -325,11 +325,11 @@ from datetime import datetime
 from io import BytesIO
 
 # ==========================================
-# 関数定義: page_graph_plotting (v16: 全機能全部入り + 要望対応版)
+# 関数定義: page_graph_plotting (v17: X軸10^N表記強化版)
 # ==========================================
 def page_graph_plotting():
     st.header("📈 統合型グラフ解析ツール")
-    st.markdown("X軸反転、指数表記改善、ペースト機能強化、塗りつぶし機能などを追加しました。")
+    st.markdown("X軸・Y軸ともに $10^{N}$ 表記を完全サポートしました。")
 
     # --- CSS ---
     st.markdown("""
@@ -385,9 +385,9 @@ def page_graph_plotting():
         c_load, c_save = st.columns(2)
         with c_load:
             st.markdown("#### 📂 復元")
-            uploaded_project = st.file_uploader("プロジェクトファイル (.json)", type=["json"], key="project_loader_v16")
+            uploaded_project = st.file_uploader("プロジェクトファイル (.json)", type=["json"], key="project_loader_v17")
             if uploaded_project:
-                if st.button("設定を読み込む", key="btn_load_proj_v16"):
+                if st.button("設定を読み込む", key="btn_load_proj_v17"):
                     try:
                         project_data = json.load(uploaded_project)
                         restored_data_list = []
@@ -404,7 +404,7 @@ def page_graph_plotting():
                                 "y_col": cols[1] if len(cols)>1 else (cols[0] if cols else None),
                                 "area": 1.0, "use_density": False,
                                 "mppt_x": 10, "mppt_y": -30,
-                                "fill_area": False # 新機能: 塗りつぶし
+                                "fill_area": False
                             }
                             for k, v in defaults.items():
                                 if k not in item: item[k] = v
@@ -421,7 +421,7 @@ def page_graph_plotting():
 
         with c_save:
             st.markdown("#### 💾 保存")
-            if st.button("プロジェクトファイルを作成", key="btn_save_proj_v16"):
+            if st.button("プロジェクトファイルを作成", key="btn_save_proj_v17"):
                 if not st.session_state['gp_data_list']:
                     st.warning("データなし")
                 else:
@@ -448,7 +448,7 @@ def page_graph_plotting():
                     }
                     json_str = json.dumps(project_obj, indent=2, ensure_ascii=False)
                     file_name = f"GraphProject_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
-                    st.download_button("⬇️ JSONをダウンロード", json_str, file_name, "application/json", key="dl_json_btn_v16")
+                    st.download_button("⬇️ JSONをダウンロード", json_str, file_name, "application/json", key="dl_json_btn_v17")
 
     # ==========================================
     # 1. データ入力
@@ -457,7 +457,7 @@ def page_graph_plotting():
     
     if st.session_state['gp_data_list']:
         st.info(f"データ数: {len(st.session_state['gp_data_list'])}")
-        if st.button("🗑️ 全データをクリア", key="btn_clear_all_v16"):
+        if st.button("🗑️ 全データをクリア", key="btn_clear_all_v17"):
             st.session_state['gp_data_list'] = []
             st.session_state['uploader_key_id'] += 1
             st.rerun()
@@ -465,7 +465,7 @@ def page_graph_plotting():
     tab1, tab2 = st.tabs(["📂 ファイルから追加", "📋 エクセルから貼り付け"])
     
     with tab1:
-        current_uploader_key = f"gp_uploader_v16_{st.session_state['uploader_key_id']}"
+        current_uploader_key = f"gp_uploader_v17_{st.session_state['uploader_key_id']}"
         files = st.file_uploader("CSV/Excelファイル", accept_multiple_files=True, key=current_uploader_key)
         
         if files:
@@ -502,21 +502,16 @@ def page_graph_plotting():
 
     with tab2:
         st.caption("Excelからコピペ (タブ区切り) して Ctrl+Enter")
-        paste_text = st.text_area("データ貼り付けエリア", height=100, key="paste_area_v16")
-        paste_name = st.text_input("データセット名", value=f"Data_{len(st.session_state['gp_data_list'])+1}", key="paste_name_v16")
+        paste_text = st.text_area("データ貼り付けエリア", height=100, key="paste_area_v17")
+        paste_name = st.text_input("データセット名", value=f"Data_{len(st.session_state['gp_data_list'])+1}", key="paste_name_v17")
         
-        if st.button("貼り付け追加", key="btn_paste_add_v16"):
+        if st.button("貼り付け追加", key="btn_paste_add_v17"):
             if paste_text:
                 try:
-                    # 改良版ペースト: タブ区切り(\t)を基本とし、スペースは無視する
-                    # 1行目をヘッダーとして扱う (Excelコピペ対応)
                     df_paste = pd.read_csv(io.StringIO(paste_text), sep='\t')
-                    
                     if df_paste is not None and not df_paste.empty:
-                        # 数値列以外も一旦含むかもしれないが、プロット時は数値のみにする
                         df_paste = df_paste.select_dtypes(include=[np.number])
                         cols = df_paste.columns.tolist()
-                        
                         auto_color = get_next_color(len(st.session_state['gp_data_list']))
                         
                         st.session_state['gp_data_list'].append({
@@ -525,7 +520,7 @@ def page_graph_plotting():
                             "legend_name": paste_name,
                             "mppt": False, "show_eq": False,
                             "visible": True,
-                            "color": auto_color, "marker": "None", # デフォルトNoneに変更
+                            "color": auto_color, "marker": "None",
                             "linestyle": "-",
                             "x_col": cols[0] if cols else None,
                             "y_col": cols[1] if len(cols) > 1 else (cols[0] if cols else None),
@@ -552,11 +547,11 @@ def page_graph_plotting():
         # --- A. キャンバス ---
         with st.expander("📊 キャンバス・フォント", expanded=False):
             c1, c2 = st.columns(2)
-            fig_w = c1.number_input("幅 (inch)", 1.0, 50.0, 6.0, step=0.5, key="fw_in_v16")
-            fig_h = c2.number_input("高さ (inch)", 1.0, 50.0, 4.0, step=0.5, key="fh_in_v16")
-            dpi_val = st.number_input("解像度 (DPI)", 72, 600, 150, key="dpi_in_v16")
-            font_family = st.selectbox("フォント", ["Times New Roman", "Arial", "Helvetica", "Meiryo", "Yu Gothic"], index=0, key="ff_sel_v16")
-            base_fs = st.number_input("基本フォントサイズ", 6, 50, 12, key="bfs_in_v16")
+            fig_w = c1.number_input("幅 (inch)", 1.0, 50.0, 6.0, step=0.5, key="fw_in_v17")
+            fig_h = c2.number_input("高さ (inch)", 1.0, 50.0, 4.0, step=0.5, key="fh_in_v17")
+            dpi_val = st.number_input("解像度 (DPI)", 72, 600, 150, key="dpi_in_v17")
+            font_family = st.selectbox("フォント", ["Times New Roman", "Arial", "Helvetica", "Meiryo", "Yu Gothic"], index=0, key="ff_sel_v17")
+            base_fs = st.number_input("基本フォントサイズ", 6, 50, 12, key="bfs_in_v17")
 
         # --- B. 軸設定 ---
         with st.expander("📐 軸 (Axes) と 単位変換", expanded=True):
@@ -570,20 +565,20 @@ def page_graph_plotting():
             def axis_ui(key_prefix, label_def, use_top=False, use_right=False):
                 col_btn = st.columns(3)
                 if col_btn[0].button("Voltage(V)", key=f"p_v_{key_prefix}"):
-                    st.session_state[f"{key_prefix}_lbl_v16"] = "Voltage (V)"
-                    st.session_state[f"{key_prefix}_scale_idx_v16"] = 0
+                    st.session_state[f"{key_prefix}_lbl_v17"] = "Voltage (V)"
+                    st.session_state[f"{key_prefix}_scale_idx_v17"] = 0
                 if col_btn[1].button("Current(mA)", key=f"p_ma_{key_prefix}"):
-                    st.session_state[f"{key_prefix}_lbl_v16"] = "Current (mA)"
-                    st.session_state[f"{key_prefix}_scale_idx_v16"] = 1
+                    st.session_state[f"{key_prefix}_lbl_v17"] = "Current (mA)"
+                    st.session_state[f"{key_prefix}_scale_idx_v17"] = 1
                 if col_btn[2].button("Current(µA)", key=f"p_ua_{key_prefix}"):
-                    st.session_state[f"{key_prefix}_lbl_v16"] = "Current (µA)"
-                    st.session_state[f"{key_prefix}_scale_idx_v16"] = 2
+                    st.session_state[f"{key_prefix}_lbl_v17"] = "Current (µA)"
+                    st.session_state[f"{key_prefix}_scale_idx_v17"] = 2
 
-                label = st.text_input("ラベル", label_def, key=f"{key_prefix}_lbl_v16")
+                label = st.text_input("ラベル", label_def, key=f"{key_prefix}_lbl_v17")
                 
-                curr_idx = st.session_state.get(f"{key_prefix}_scale_idx_v16", 0)
-                scale_key = st.selectbox("表示倍率", list(SCALE_OPTIONS.keys()), index=curr_idx, key=f"{key_prefix}_scale_sel_v16")
-                st.session_state[f"{key_prefix}_scale_idx_v16"] = list(SCALE_OPTIONS.keys()).index(scale_key)
+                curr_idx = st.session_state.get(f"{key_prefix}_scale_idx_v17", 0)
+                scale_key = st.selectbox("表示倍率", list(SCALE_OPTIONS.keys()), index=curr_idx, key=f"{key_prefix}_scale_sel_v17")
+                st.session_state[f"{key_prefix}_scale_idx_v17"] = list(SCALE_OPTIONS.keys()).index(scale_key)
                 
                 current_scale_val = SCALE_OPTIONS[scale_key]
                 prev_scale_key = f"{key_prefix}_prev_scale_val"
@@ -591,8 +586,8 @@ def page_graph_plotting():
                 
                 if current_scale_val != prev_scale_val:
                     ratio = current_scale_val / prev_scale_val
-                    k_min = f"{key_prefix}_min_v16"
-                    k_max = f"{key_prefix}_max_v16"
+                    k_min = f"{key_prefix}_min_v17"
+                    k_max = f"{key_prefix}_max_v17"
                     if st.session_state.get(k_min) is not None:
                         st.session_state[k_min] = st.session_state[k_min] * ratio
                     if st.session_state.get(k_max) is not None:
@@ -630,8 +625,8 @@ def page_graph_plotting():
                         calc_min -= margin
                         calc_max += margin
 
-                k_min = f"{key_prefix}_min_v16"
-                k_max = f"{key_prefix}_max_v16"
+                k_min = f"{key_prefix}_min_v17"
+                k_max = f"{key_prefix}_max_v17"
                 if st.session_state.get(k_min) is None and calc_min is not None:
                     st.session_state[k_min] = calc_min
                 if st.session_state.get(k_max) is None and calc_max is not None:
@@ -644,13 +639,12 @@ def page_graph_plotting():
                 d_min = c1.number_input("最小", value=None, format="%f", key=k_min)
                 d_max = c2.number_input("最大", value=None, format="%f", key=k_max)
                 c3, c4 = st.columns(2)
-                maj_int = c3.number_input("主目盛", 0.0, step=0.1, key=f"{key_prefix}_maj_v16")
-                min_int = c4.number_input("補助目盛", 0.0, step=0.1, key=f"{key_prefix}_min_int_v16")
+                maj_int = c3.number_input("主目盛", 0.0, step=0.1, key=f"{key_prefix}_maj_v17")
+                min_int = c4.number_input("補助目盛", 0.0, step=0.1, key=f"{key_prefix}_min_int_v17")
                 
-                # Invert と Log
                 c5, c6 = st.columns(2)
-                is_log = c5.checkbox("対数軸", False, key=f"{key_prefix}_log_v16")
-                is_inv = c6.checkbox("軸を反転", False, key=f"{key_prefix}_inv_v16") # 新機能: X軸反転
+                is_log = c5.checkbox("対数軸", False, key=f"{key_prefix}_log_v17")
+                is_inv = c6.checkbox("軸を反転", False, key=f"{key_prefix}_inv_v17")
 
                 return {"label": label, "min": d_min, "max": d_max, "maj": maj_int, "log": is_log, "inv": is_inv, "scale": current_scale_val}
 
@@ -660,13 +654,13 @@ def page_graph_plotting():
             with tabs_ax[3]: ax_settings['y2'] = axis_ui("y2", "Power (W)", use_right=True)
             
             with tabs_ax[4]:
-                tick_dir = st.selectbox("目盛の向き", ["in", "out", "inout"], index=0, key="tdir_v16")
-                show_grid = st.checkbox("グリッド表示", False, key="sgrid_v16") # デフォルトOFFに変更
-                zero_cross = st.checkbox("原点線描画", True, key="zcross_v16")
+                tick_dir = st.selectbox("目盛の向き", ["in", "out", "inout"], index=0, key="tdir_v17")
+                show_grid = st.checkbox("グリッド表示", False, key="sgrid_v17")
+                zero_cross = st.checkbox("原点線描画", True, key="zcross_v17")
 
         # --- C. 凡例設定 ---
         with st.expander("📝 凡例 (Legend)", expanded=True):
-            show_leg = st.checkbox("凡例を表示", True, key="sleg_v16")
+            show_leg = st.checkbox("凡例を表示", True, key="sleg_v17")
             
             st.markdown("#### 凡例順序・表示設定")
             for i, d in enumerate(datasets):
@@ -685,17 +679,17 @@ def page_graph_plotting():
                 st.markdown("---")
                 st.markdown("**スタイル設定**")
                 c_auto, c_size = st.columns(2)
-                auto_leg_size = c_auto.checkbox("サイズ自動調整", True, key="auto_leg_size_v16")
-                manual_fs = c_size.number_input("フォントサイズ", 5, 40, int(base_fs), disabled=auto_leg_size, key="lfont_v16")
+                auto_leg_size = c_auto.checkbox("サイズ自動調整", True, key="auto_leg_size_v17")
+                manual_fs = c_size.number_input("フォントサイズ", 5, 40, int(base_fs), disabled=auto_leg_size, key="lfont_v17")
                 if auto_leg_size:
                     l_fontsize = max(6, int(base_fs) - (len(datasets) // 3))
                 else:
                     l_fontsize = manual_fs
 
                 c1, c2 = st.columns(2)
-                l_loc = c1.selectbox("位置", ["best", "upper right", "upper left", "lower right", "lower left", "outside right"], index=0, key="lloc_v16")
-                l_col = c2.number_input("列数", 1, 5, 1, key="lcol_v16")
-                l_frame = st.checkbox("枠線を表示", False, key="lframe_v16")
+                l_loc = c1.selectbox("位置", ["best", "upper right", "upper left", "lower right", "lower left", "outside right"], index=0, key="lloc_v17")
+                l_col = c2.number_input("列数", 1, 5, 1, key="lcol_v17")
+                l_frame = st.checkbox("枠線を表示", False, key="lframe_v17")
 
         # --- D. データ系列 ---
         st.markdown("#### データ系列設定")
@@ -722,9 +716,9 @@ def page_graph_plotting():
 
                 xc = sc1.selectbox(f"X列", cols, index=ix_x, key=f"xc_{did}")
                 yc = sc2.selectbox(f"Y列", cols, index=ix_y, key=f"yc_{did}")
-                # 新機能: X/Y 入替ボタン
+                # X/Y 入替
                 if sc3.button("🔄 入替", key=f"xy_swap_{did}"):
-                    d['x_col'], d['y_col'] = yc, xc # Swap and update
+                    d['x_col'], d['y_col'] = yc, xc
                     st.rerun()
 
                 st.caption("電流密度計算 (Y軸 = Y / 面積)")
@@ -745,7 +739,6 @@ def page_graph_plotting():
                 d['marker_size'] = lw2.number_input("点サイズ", 0.0, 20.0, float(d.get('marker_size', 6.0)), key=f"ms_{did}")
                 d['linestyle'] = st.selectbox("線種", ["-", "--", "-.", ":", "None"], index=0, key=f"lst_{did}")
                 
-                # 新機能: 塗りつぶし
                 d['fill_area'] = st.checkbox("0まで塗りつぶす (Fill)", d.get('fill_area', False), key=f"fill_{did}")
 
                 st.markdown("---")
@@ -776,7 +769,7 @@ def page_graph_plotting():
             plt.rcParams['font.sans-serif'] = [font_family] + plt.rcParams['font.sans-serif']
         plt.rcParams['font.size'] = base_fs
         
-        # 指数表記を 10^21 (MathText) に変更
+        # MathTextモード有効化
         plt.rcParams['axes.formatter.use_mathtext'] = True
 
         fig, ax1 = plt.subplots(figsize=(fig_w, fig_h), dpi=dpi_val)
@@ -798,7 +791,7 @@ def page_graph_plotting():
         if has_right and has_top:
             axes_map[(True, True)] = ax3
 
-        # 軸設定適用関数
+        # 軸設定適用関数 (修正: X, Y 独立フォーマッター)
         def apply_axis_conf(ax, xc, yc):
             if not ax: return
             ax.set_xlabel(xc['label'])
@@ -810,15 +803,20 @@ def page_graph_plotting():
             if xc['log']: ax.set_xscale('log')
             if yc['log']: ax.set_yscale('log')
             
-            # X軸反転
             if xc.get('inv', False):
                 ax.invert_xaxis()
             
-            # 10^21 表記設定 (ScalarFormatter)
-            formatter = ticker.ScalarFormatter(useMathText=True)
-            formatter.set_powerlimits((-2, 3)) # 範囲外は指数表記
-            ax.xaxis.set_major_formatter(formatter)
-            ax.yaxis.set_major_formatter(formatter)
+            # --- ここを修正: X軸とY軸で別々のFormatterインスタンスを作成 ---
+            # X軸
+            xfmt = ticker.ScalarFormatter(useMathText=True)
+            xfmt.set_powerlimits((-2, 3))
+            ax.xaxis.set_major_formatter(xfmt)
+            
+            # Y軸
+            yfmt = ticker.ScalarFormatter(useMathText=True)
+            yfmt.set_powerlimits((-2, 3))
+            ax.yaxis.set_major_formatter(yfmt)
+            # -----------------------------------------------------
 
             if xc['maj'] > 0: ax.xaxis.set_major_locator(ticker.MultipleLocator(xc['maj']))
             if yc['maj'] > 0: ax.yaxis.set_major_locator(ticker.MultipleLocator(yc['maj']))
@@ -873,7 +871,6 @@ def page_graph_plotting():
                                    color=d['color'], marker=mk, linestyle=ls,
                                    linewidth=d.get('line_width', 1.5), markersize=d.get('marker_size', 6))
             
-            # 新機能: 塗りつぶし
             if d.get('fill_area', False):
                 target_ax.fill_between(x_plot, y_plot, 0, color=d['color'], alpha=0.3)
 
@@ -940,7 +937,7 @@ def page_graph_plotting():
         
         buf = BytesIO()
         fig.savefig(buf, format="png", dpi=300, bbox_inches='tight')
-        st.download_button("画像を保存 (PNG)", buf.getvalue(), "plot.png", "image/png", key="dl_png_v16")
+        st.download_button("画像を保存 (PNG)", buf.getvalue(), "plot.png", "image/png", key="dl_png_v17")
 # ---------------------------
 # --- Components ---
 # ---------------------------
@@ -1401,6 +1398,7 @@ if __name__ == "__main__":
     except Exception:
         pass
     main()
+
 
 
 
